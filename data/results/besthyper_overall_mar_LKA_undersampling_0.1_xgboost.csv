@@ -1,0 +1,2 @@
+,booster,gamma,learning_rate,max_depth,n_estimators,reg_alpha,reg_lambda
+0,gbtree,0,0.05,3,500,0,5

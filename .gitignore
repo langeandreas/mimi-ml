@@ -126,4 +126,6 @@ dmypy.json
 
 # data
 
-data/
+data/lka
+data/nga
+data/eth

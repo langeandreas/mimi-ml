@@ -1,6 +1,7 @@
 # Compact trajectory schema: tree evolution + SHAP evolution
 import json
 import numpy as np
+from pathlib import Path
 from collections import Counter
 from itertools import combinations
 
@@ -22,6 +23,63 @@ class TrajectorySummarizer:
         self.classification = classification
         self.save = save
         self.path = path
+
+    def _generate_output_file(self, default_filename: str) -> Path:
+        """Returns a writable output file path.
+        If self.path points to a JSON file, that file is used directly
+        If self.path points to a directory, default_filename is created inside it
+        """
+        base_path = Path(self.path)
+        if base_path.suffix.lower() == ".json":
+            base_path.parent.mkdir(parents=True, exist_ok=True)
+            return base_path
+
+        base_path.mkdir(parents=True, exist_ok=True)
+        return base_path / default_filename
+
+    def _generate_output_dir(self) -> Path:
+        """Returns an output directory path for generated artifacts."""
+        base_path = Path(self.path)
+        output_dir = base_path.parent if base_path.suffix.lower() == ".json" else base_path
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    @staticmethod
+    def _build_phase_summaries(progress):
+        """Builds early/mid/late split-feature summaries from iteration progress."""
+        phase_summaries = []
+        if not progress:
+            return phase_summaries
+
+        n = len(progress)
+        split_points = [0, n // 3, (2 * n) // 3, n]
+        labels = ["early", "mid", "late"]
+
+        for idx in range(3):
+            start = split_points[idx]
+            end = split_points[idx + 1]
+            if end <= start:
+                continue
+
+            phase_steps = progress[start:end]
+            counter = Counter()
+            for step in phase_steps:
+                for item in step.get("top_split_features", []):
+                    counter[item["feature_index"]] += item["split_count"]
+
+            top_phase = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+            phase_summaries.append(
+                {
+                    "phase_name": labels[idx],
+                    "iteration_range": [int(phase_steps[0]["iteration"]), int(phase_steps[-1]["iteration"])],
+                    "top_phase_features": [
+                        {"feature_index": int(fi), "split_count": int(cnt)}
+                        for fi, cnt in top_phase
+                    ],
+                }
+            )
+
+        return phase_summaries
 
     @staticmethod
     def _round_float(x):
@@ -177,10 +235,12 @@ class TrajectorySummarizer:
                 progress.append(tree_step)
         tree_json = {
             "feature_names": feature_names,
+            "phase_summaries": self._build_phase_summaries(progress),
             "iteration_progress": progress,
         }
         if save or self.save: # enable save override with parameter or class attribute
-            with open(self.path, 'w', encoding='utf-8') as fp:
+            output_file = self._generate_output_file("trajectory_tree.json")
+            with open(output_file, 'w', encoding='utf-8') as fp:
                 json.dump(tree_json, fp, ensure_ascii=False, separators=(',', ':'))
         return tree_json
 
@@ -198,12 +258,13 @@ class TrajectorySummarizer:
             "iteration_progress": shap_steps,
         }
         if self.save or save: # enable save override with parameter or class attribute
-            with open(self.path, 'w', encoding='utf-8') as fp:
+            output_file = self._generate_output_file("trajectory_shap.json")
+            with open(output_file, 'w', encoding='utf-8') as fp:
                 json.dump(shap_json, fp, ensure_ascii=False, separators=(',', ':'))
 
         return shap_json
 
-    def summarize_training_process(self, country_iso: str, mn: str):
+    def summarize_training_process(self, country_iso: str, mn: str, save=None):
         """
         Generates the trajectory JSON by combining tree and SHAP summaries.
         :param country_iso: ISO code of the country (used for saving)
@@ -288,33 +349,7 @@ class TrajectorySummarizer:
                 if feature_first_seen_iteration[feature_index] == -1:
                     feature_first_seen_iteration[feature_index] = step["iteration"]
 
-        phase_summaries = []
-        if progress:
-            n = len(progress)
-            split_points = [0, n // 3, (2 * n) // 3, n]
-            labels = ["early", "mid", "late"]
-
-            for idx in range(3):
-                start = split_points[idx]
-                end = split_points[idx + 1]
-                if end <= start:
-                    continue
-
-                phase_steps = progress[start:end]
-                counter = Counter()
-                for step in phase_steps:
-                    for item in step.get("top_split_features", []):
-                        counter[item["feature_index"]] += item["split_count"]
-
-                top_phase = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
-                phase_summaries.append({
-                    "phase_name": labels[idx],
-                    "iteration_range": [int(phase_steps[0]["iteration"]), int(phase_steps[-1]["iteration"])],
-                    "top_phase_features": [
-                        {"feature_index": int(fi), "split_count": int(cnt)}
-                        for fi, cnt in top_phase
-                    ],
-                })
+        phase_summaries = self._build_phase_summaries(progress)
 
         compact_trajectory_json = {
             "metadata": {
@@ -334,8 +369,10 @@ class TrajectorySummarizer:
             "iteration_progress": progress,
         }
 
-        if self.save:
-            with open(self.path + f"trajectory_compact_{self.classification.type_target}_{country_iso}_{self.classification.sampling}_best_model_{mn}.json", 'w', encoding='utf-8') as fp:
+        if self.save or save:
+            output_dir = self._generate_output_dir()
+            output_file = output_dir / f"trajectory_compact_{self.classification.type_target}_{country_iso}_{self.classification.sampling}_best_model_{mn}.json"
+            with open(output_file, 'w', encoding='utf-8') as fp:
                 json.dump(compact_trajectory_json, fp, ensure_ascii=False, separators=(',', ':'))
 
         return compact_trajectory_json
