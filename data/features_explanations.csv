@@ -24,3 +24,4 @@
 22,vim_avg,climate: normalized difference vegetation index longterm
 23,rfh_avg,climate: rainfall longterm
 24,r3q,climate: rainfall anomaly
+25,food_group9, "food group diversity: spices"

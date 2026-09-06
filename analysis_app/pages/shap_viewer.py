@@ -13,6 +13,22 @@ from analysis_app.utils import get_llm_config, load_shap_json, pick_top_features
 from explainer.analysis.trajectory_utils import substitute_feature_names
 
 
+def _normalize_shap_matrix(shap_values_raw: object) -> np.ndarray:
+    """Normalize SHAP outputs to a 2D matrix (samples x features)."""
+    if isinstance(shap_values_raw, list):
+        shap_matrix = np.asarray(shap_values_raw[-1])
+    else:
+        shap_matrix = np.asarray(shap_values_raw)
+
+    if shap_matrix.ndim == 1:
+        return shap_matrix.reshape(1, -1)
+    if shap_matrix.ndim == 2:
+        return shap_matrix
+    if shap_matrix.ndim == 3:
+        return np.asarray(shap_matrix[:, :, -1])
+    raise ValueError(f"Unsupported SHAP value shape: {shap_matrix.shape}")
+
+
 def _render_shap_summary_plot(
     summary_traj, selected_iteration: int, iteration_entry: dict
 ) -> None:
@@ -24,18 +40,30 @@ def _render_shap_summary_plot(
         iteration_entry: The entry containing SHAP values for the iteration.
     """
 
-    # Prepare SHAP values and base features
-    shap_values = np.asarray(iteration_entry["shap_values"])
+    # Normalize SHAP values into a 2D sample x feature matrix.
+    shap_values = _normalize_shap_matrix(iteration_entry["shap_values"])
     feature_names = summary_traj.feature_names
 
-    # Get training data from classification for reference
+    # SHAP values in the callback are computed on explain.X_train, not on classification.train_test["X_train"].
+    callback_matrix = np.asarray(summary_traj.explain.X_train)
+    if callback_matrix.ndim == 1:
+        callback_matrix = callback_matrix.reshape(1, -1)
+
+    n_rows = min(shap_values.shape[0], callback_matrix.shape[0])
+    n_features = min(shap_values.shape[1], callback_matrix.shape[1], len(feature_names))
+    if n_rows == 0 or n_features == 0:
+        st.warning("Could not align SHAP values with callback sample data for plotting.")
+        return
+
+    # Align both matrices to the same shape so feature values and SHAP attributions match.
+    shap_values = shap_values[:n_rows, :n_features]
     X_sample = pd.DataFrame(
-        summary_traj.classification.train_test["X_train"][: shap_values.shape[0]],
-        columns=feature_names,
+        callback_matrix[:n_rows, :n_features],
+        columns=feature_names[:n_features],
     )
 
     # Replace technical feature names with readable explanations where available.
-    rename_df = pd.DataFrame({"feature_index": feature_names})
+    rename_df = pd.DataFrame({"feature_index": feature_names[:n_features]})
     rename_df = substitute_feature_names(
         rename_df,
         feature_index_col="feature_index",

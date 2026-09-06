@@ -1,6 +1,7 @@
 """Utility functions for trajectory analysis."""
 
 from pathlib import Path
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -12,9 +13,24 @@ TOP_K_TREE_FEATURES = 10
 TOP_K_INTERACTIONS = 8
 
 
+TARGET_VARIABLE_READABLE = {
+    "overall_mar": "Overall Mean Adequacy Ratio",
+    "zn_ai": "Zinc Intake",
+    "vita_rae_mcg": "Vitamin A Intake (RAE mcg)",
+    "folate_mcg": "Folate Intake (mcg)",
+    "fe_mg": "Iron Intake (mg)",
+    "vitb12_mcg": "Vitamin B12 Intake (mcg)",
+}
+
+
 def round_float(x: float) -> float:
     """Round a float to the configured decimal places."""
     return round(float(x), ROUND_DECIMALS)
+
+
+def readable_target_name(target_variable: str) -> str:
+    """Return a human-readable label for a target variable code."""
+    return TARGET_VARIABLE_READABLE.get(target_variable, target_variable)
 
 
 def generate_output_file(base_path: str, default_filename: str) -> Path:
@@ -89,7 +105,7 @@ def substitute_feature_names(
 
 
 def expand_shap_step(step: dict) -> dict:
-    """Normalize SHAP step payloads across legacy and compact schemas."""
+    """Normalize SHAP step payloads."""
     if "top_shap_features" in step:
         return {
             "iteration": int(step["iteration"]),
@@ -129,7 +145,6 @@ def expand_shap_step(step: dict) -> dict:
 
 def build_phase_summaries(progress: list) -> list:
     """Builds early/mid/late split-feature summaries from iteration progress."""
-    from collections import Counter
     
     phase_summaries = []
     if not progress:

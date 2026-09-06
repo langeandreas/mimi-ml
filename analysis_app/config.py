@@ -10,6 +10,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Define data paths as absolute paths
 DEFAULT_JSON_PATH = str(PROJECT_ROOT / "data" / "results" / "trajectory_shap.json")
 DEFAULT_TREE_JSON_PATH = str(PROJECT_ROOT / "data" / "results" / "trajectory_tree.json")
+DEFAULT_BEHAVIOR_JSON_PATH = str(
+    PROJECT_ROOT / "data" / "results" / "trajectory_shap_behavior_correlation.json"
+)
+DEFAULT_GEODATA_PATH = str(PROJECT_ROOT / "data" / "lka" / "geodata_sri_lanka.csv")
+DEFAULT_HH_GEO_MAPPING_PATH = str(PROJECT_ROOT / "data" / "lka" / "hh_geo_mapping.csv")
 
 Y_OPTIONS = {
     "Mean Absolute SHAP": "mean_abs_shap",
@@ -20,6 +25,7 @@ Y_OPTIONS = {
 DEFAULT_APP_CONFIG = {
     "shap_json_path": DEFAULT_JSON_PATH,
     "tree_json_path": DEFAULT_TREE_JSON_PATH,
+    "behavior_json_path": DEFAULT_BEHAVIOR_JSON_PATH,
     "y_label": "Mean Absolute SHAP",
     "top_k": 8,
     "chat_execution_mode": "graph",
@@ -30,9 +36,9 @@ DEFAULT_APP_CONFIG = {
 
 DEFAULT_TRAJECTORY_PIPELINE_CONFIG = TrajectoryPipelineConfig(
     type_target="overall_mar",
-    best_hyperparams_path=str(PROJECT_ROOT / "data" / "results" / "besthyper_overall_mar_LKA_undersampling_0.1_xgboost.csv"),
+    best_hyperparams_path=str(PROJECT_ROOT / "data" / "results" / "besthyper_overall_mar_LKA_undersampling_v3_xgboost.csv"),
     country_iso="LKA",
-    features_path=str(PROJECT_ROOT / "data" / "lka" / "new_features_lka.csv"),
-    targets_path=str(PROJECT_ROOT / "data" / "lka" / "ML_targets_lka.csv"),
+    features_path=str(PROJECT_ROOT / "data" / "lka" / "sri_lanka_features19_updated.csv"),
+    targets_path=str(PROJECT_ROOT / "data" / "lka" / "ML_targets_lka_updated.csv"),
     model_name="xgboost",
 )

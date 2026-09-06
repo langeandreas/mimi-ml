@@ -20,13 +20,14 @@ class TrajectoryPipelineConfig:
     model_name: str
 
     device: Optional[str] = 'cuda'
-    random_state: int = 42
+    use_best_random_state: bool = True
+    random_state: int = 0
     cross_country: bool = False
     sampling: Optional[str] = 'undersampling'
-    sampling_strategy: Optional[float] = 0.5
+    sampling_strategy: Optional[float] = 1.0
     verbose: bool = False
 
-    shap_sample_size: int = 100
+    shap_sample_size: int = 1000
     shap_interval: int = 20
     shap_epsilon: Optional[float] = 0.1
     shap_interval_min: int = 5
@@ -43,6 +44,12 @@ class TrajectoryPipelineConfig:
 
     generate_feature_profiles_llm: bool = True
     feature_profiles_top_k: int = 15
+
+    generate_cohort_attribution: bool = False
+    cohort_min_support: int = 50
+    cohort_min_paths: int = 5
+    cohort_top_k: int = 20
+    cohort_top_local_shap: int = 8
 
 
     def __getitem__(self, key: str) -> Optional[Any]:

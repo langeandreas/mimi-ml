@@ -47,13 +47,14 @@ def run_classification_trajectory_pipeline(
         shap_interval_max=config.shap_interval_max,
     )
 
+
     classification = Classification(
         y=y,
         data_all=data_all,
         type_target=config.type_target,
         device=config.device,
         verbose=config.verbose,
-        random_state=config.random_state,
+        random_state=config.random_state if not config.use_best_random_state else pd.read_csv(config.best_hyperparams_path.replace("besthyper", "perf")).best_random_state[0],
         cross_country=config.cross_country,
         sampling=config.sampling,
         sampling_strategy=config.sampling_strategy,
@@ -62,19 +63,33 @@ def run_classification_trajectory_pipeline(
 
     model = classification.xgbclassification_best_model(config.best_hyperparams_path)
     predictions = classification.predictions(model)
-    performance = classification.perf_ind_classification(predictions)
+    probabilities = classification.y_proba(model)
+    performance = classification.perf_ind_classification(predictions, probs=probabilities)
 
     summary_traj = TrajectorySummarizer(
         explain=explain,
         classification=classification,
+        model=model,
         save=config.save_artifacts,
         path=config.output_path,
         change_point_epsilon=config.change_point_epsilon,
+        country_iso=config.country_iso,
+        model_name=config.model_name,
     )
 
     artifacts: Dict[str, Any] = {
         "performance": performance,
     }
+
+    final_explainability_json = summary_traj.generate_final_explainability_json(
+        model=model,
+        predictions=predictions,
+        probs=probabilities,
+        performance=performance,
+        save=config.save_artifacts,
+        top_k_features=max(config.llm_top_k_features, 10),
+    )
+    artifacts["final_explainability_json"] = final_explainability_json
 
     if config.generate_shap_llm_summary:
         shap_llm_summary_json = summary_traj.generate_shap_llm_summary_json(
@@ -91,5 +106,25 @@ def run_classification_trajectory_pipeline(
             readable_feature_names=True,
         )
         artifacts["feature_profiles_json"] = feature_profiles_json
+
+    context_json = summary_traj.generate_context_json(save=config.save_artifacts)
+    artifacts["context_json"] = context_json
+
+    if config.generate_cohort_attribution:
+        final_shap_values = None
+        if config.cohort_top_local_shap > 0:
+            estimator = model.best_estimator_ if hasattr(model, "best_estimator_") else model
+            final_shap_values = classification.shap_values(estimator)
+
+        cohort_json = summary_traj.generate_cohort_attribution_json(
+            model=model,
+            final_shap_values=final_shap_values,
+            save=config.save_artifacts,
+            min_support=config.cohort_min_support,
+            min_paths=config.cohort_min_paths,
+            top_k=config.cohort_top_k,
+            top_local_shap=config.cohort_top_local_shap,
+        )
+        artifacts["cohort_attribution_json"] = cohort_json
 
     return summary_traj, artifacts

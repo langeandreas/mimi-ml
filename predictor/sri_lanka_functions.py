@@ -78,7 +78,7 @@ def get_best_random_state():
     """Returns the best random state for classification based on prior experiments."""
     return pd.read_csv('../data/results/perf_overall_mar_LKA_undersampling_0.1_xgboost.csv').best_random_state[0]
 
-def lka_data_preparation(new_features_fp, targets_fp, t=TargetTypeLKA.OverallInadequacy):
+def lka_data_preparation(new_features_fp, targets_fp, t=TargetTypeLKA.OverallInadequacy) -> tuple[pd.DataFrame, pd.DataFrame]:
     """prepares the data for Sri Lanka by loading the features and targets, and applying the target class conversion
     :param new_features_fp: the file path to the features dataset
     :param targets_fp: the file path to the targets dataset

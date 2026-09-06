@@ -1,0 +1,73 @@
+
+# Writing
+
+## methodology notes
+
+capture metrics during training process, 
+generating SHAP values at the end, maybe snapshots during training
+capture uncertainty factors that requires further boosting
+
+# structured LLM input / modularization
+describe how different part of the prediction model can flow into the LLM, 
+XGBoost internals, training snapshots
+
+
+\section{LLM design, input embeddings, context window management}
+
+## novelty chapter
+
+no related work 
+
+what is new
+
+
+
+preprocessing
+
+write 
+
+acknowledgement
+for sri lanka
+
+
+put schema at beginning of chapter 3
+explain 
+
+
+show everything in schema also in the json and show what is captures how
+
+## Coding
+
+next steps to do tomorrow
+- retrain predictor model (current accuracy sucks), apparantly that's how high it gets DONE
+- generate report - tree explainer needs fixing, format sucks, maybe skip entirely and just use one analyst agent
+- initialize other agents
+
+
+To do something completely novel, you should move away from model-agnostic tools like SHAP and leverage XGBoost's native mathematical engine: Gradients (\(g_{i}\)) and Hessians (\(h_{i}\)) on a per-iteration basis.
+When XGBoost builds a tree, it calculates an exact Similarity Score for its leaves using the first and second derivatives of the loss function:\(\text{Similarity\ Score}=\frac{\left(\sum g_{i}\right)^{2}}{\sum h_{i}+\lambda }\)
+By capturing these internal values at every single iteration, you can build a new explainability paradigm. Here are three novel, mathematically concrete approaches you can pioneer.
+Method 1: Feature Kinetic Energy (The "Acceleration" Metric)Standard feature importance tells you how much a feature reduced error overall. It does not tell you when the feature was useful.The Novel Logic: Calculate the Kinetic Energy of a feature across the training trajectory. For every iteration t where a feature is chosen as a split node, capture the exact Gain (\(G_{t}\)) it generated.The Math: Plot the cumulative split gain of each feature against the boosting iteration. Compute the first derivative of this curve (Feature Velocity) and the second derivative (Feature Acceleration).What this explains:High Acceleration early on: The feature is a Core Driver that captures macro-structures.High Acceleration late in training: The feature is an Outlier Specialist that is memorizing edge cases or noise.Spiking/Oscillating Acceleration: Two features are collinear and are "fighting" for dominance (Feature Swapping).
+Method 2: Gradient Cohesion Mapping (Detecting Sub-population Bias)Instead of looking at the dataset globally, look at how features split the gradients of individual rows over time.The Novel Logic: Track the gradient vector \(G^{(t)} = [g_1, g_2, ... g_N]\) across all N samples at iteration t. When a feature creates a split, it divides these samples into a Left Leaf and a Right Leaf.The Math: Compute the Cosine Similarity of the gradient vectors between the data samples assigned to the same leaf node.What this explains: This yields a metric for Sub-population Cohesion. If a feature creates splits where the resulting leaf nodes have a high cosine similarity of gradients, it proves the feature is carving out a highly unified, predictable sub-population (e.g., "This feature cleanly isolates low-income young adults"). If the cohesion is low, the model is using that feature as a frantic, high-variance patch.
+Method 3: Hessian Volatility Index (Quantifying Model Confidence)The Hessian (\(h_{i}\)) represents the curvature of the loss function (the second derivative). In log-loss classification, \(h_i = p_i(1-p_i)\), meaning the Hessian peaks at 0.25 when the model is completely unsure (p=0.5), and drops to 0 when the model is highly confident (p → 0 or 1).The Novel Logic: Track the sum of the Hessians (\(\sum h_i\)) flowing through a feature's split nodes at every iteration.The Math: Compute the Hessian Volatility Index (HVI) for each feature: the average Hessian value of the samples that pass through its split points at iteration t.What this explains: This completely maps out model confidence per feature. A feature whose splits process high Hessian values deep into the training lifecycle is a Conflict Resolver—the model relies on it specifically when it is highly confused. Features processing low Hessians are Safety Validations—used to double-check populations the model already feels secure about.Summary of Novel Explanatory FrameworksNovel ConceptMath Metrics Needed per IterationWhat it tells the Developer / StakeholderFeature AccelerationSplit Gain per tree → Second DerivativeIsolates structural learning from overfitting and noise.Gradient CohesionVector of raw Sample Gradients (\(g_{i}\)) inside leavesIdentifies if a feature is grouping clean profiles or messy outliers.Hessian VolatilitySample Second Derivatives (\(h_{i}\)) at split points
+Identifies which features the model uses to resolve confusion.
+
+```python
+import xgboost as xgb
+
+# 1. Custom callback to grab gradients/hessians dynamically at each iteration
+def novel_explainability_callback(env):
+    # env.iteration gives current boosting round
+    # env.model.get_split_log() or custom objectives give raw values
+    pass
+
+# 2. Post-training JSON Trajectory Extraction
+bst = xgb.train(params, dtrain, num_boost_round=100)
+df_trees = bst.trees_to_dataframe()
+
+# df_trees contains 'Tree', 'Node', 'Feature', 'Gain', and 'Cover' (which is the sum of Hessians!)
+# You can group by 'Tree' (Iteration) and 'Feature' to calculate these custom metrics.
+st tree structure to calculate your chosen metric?
+
+
+use shap as baseline feature importance

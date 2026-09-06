@@ -13,6 +13,7 @@ import streamlit as st
 from analysis_app.config import DEFAULT_TREE_JSON_PATH
 from analysis_app.utils import get_llm_config
 from explainer.analysis.trajectory_utils import substitute_feature_names
+from explainer.analysis.tree_analyzer import TreeAnalyzer
 
 
 def _load_tree_json(path: str) -> Dict[str, Any]:
@@ -41,6 +42,15 @@ def _substitute_feature_column(df: pd.DataFrame, col: str, feature_names: List[s
     out = substitute_feature_names(out, feature_index_col=col, feature_names=feature_names)
     out[col] = out[col].astype(str)
     return out
+
+
+def _feature_idx_to_readable_name(feature_idx: int, feature_names: List[str]) -> str:
+    """Resolve feature index to readable feature label."""
+    tmp_df = pd.DataFrame({"feature_index": [int(feature_idx)]})
+    tmp_df = _substitute_feature_column(tmp_df, "feature_index", feature_names)
+    if tmp_df.empty:
+        return str(feature_idx)
+    return str(tmp_df.iloc[0]["feature_index"])
 
 
 def render_tree_viewer_page() -> None:
@@ -124,51 +134,317 @@ def render_tree_viewer_page() -> None:
             )
 
     metrics_df = pd.DataFrame(metric_rows).sort_values("iteration")
-    leaf_df = pd.DataFrame(leaf_rows).sort_values("iteration")
+    _leaf_df = pd.DataFrame(leaf_rows).sort_values("iteration")
     features_df = pd.DataFrame(feature_rows)
     interactions_df = pd.DataFrame(interaction_rows)
 
-    st.subheader("Tree Complexity Over Iterations")
-    complexity_options = ["split_count", "leaf_count", "max_depth"]
-    selected_metrics = st.multiselect(
-        "Metrics to plot",
-        options=complexity_options,
-        default=["split_count", "max_depth"],
-        key="tree_complexity_metrics",
-    )
 
-    if selected_metrics:
-        fig, ax = plt.subplots(figsize=(12, 5))
-        for metric in selected_metrics:
-            ax.plot(metrics_df["iteration"], metrics_df[metric], label=metric, alpha=0.9)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Value")
-        ax.set_title("Tree Complexity Trajectory")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        st.pyplot(fig, width="content")
+    # Behavioral Signatures Section (requires model access from session state)
+    st.subheader("Feature Behavioral Signatures")
+    confusion_metric = st.radio(
+        "Confusion metric",
+        options=["hessian", "fci"],
+        index=0,
+        horizontal=True,
+        key="behavioral_confusion_metric",
+    )
+    confusion_label = (
+        "Raw Hessian mean (HVI signal)" if confusion_metric == "hessian" else "Feature Confusion Index (FCI)"
+    )
+    st.caption(
+        f"Analyze Feature Acceleration and {confusion_label} to reveal model learning patterns."
+    )
+    
+    if "summary_traj" in st.session_state and st.session_state.summary_traj is not None:
+        summary_traj = st.session_state.summary_traj
+        
+        if hasattr(summary_traj, "model") and summary_traj.model is not None:
+            try:
+                # Compute trajectory metrics from the booster
+                with st.spinner("Computing trajectory metrics..."):
+                    tree_analyzer = TreeAnalyzer(summary_traj.classification)
+                    
+                    # Get the booster (handle both GridSearchCV and direct XGBClassifier)
+                    model = summary_traj.model
+                    if hasattr(model, "best_estimator_"):
+                        booster = model.best_estimator_.get_booster()
+                    else:
+                        booster = model.get_booster()
+                    
+                    trajectory_metrics = tree_analyzer.compute_trajectory_metrics(booster)
+                
+                if trajectory_metrics:
+                    # Display behavioral signatures table
+                    behavioral_data = []
+                    for feature_idx in sorted(trajectory_metrics.keys()):
+                        signature = tree_analyzer.get_behavioral_signature(
+                            trajectory_metrics,
+                            feature_idx,
+                            confusion_metric=confusion_metric,
+                        )
+                        behavioral_data.append(signature)
+                    
+                    sig_df = pd.DataFrame(behavioral_data)
+                    if not sig_df.empty:
+                        sig_df = sig_df[
+                            [
+                                'feature_name',
+                                'signature',
+                                'total_gain',
+                                'avg_fci',
+                                'early_acceleration_mean',
+                                'late_acceleration_mean',
+                                'num_iterations',
+                            ]
+                        ].rename(columns={"avg_fci": f"avg_confusion ({confusion_metric})"})
+                        with st.expander("Show behavioral signatures table", expanded=False):
+                            st.dataframe(sig_df, width="content")
+                    
+                    # Feature selection controls with human-readable names
+                    st.subheader("Feature Selection")
+                    
+                    # Create DataFrame for substitution
+                    feature_df = pd.DataFrame({
+                        'feature_idx': list(trajectory_metrics.keys()),
+                        'codename': [metrics['feature_name'] for metrics in trajectory_metrics.values()]
+                    })
+                    
+                    # Substitute codenames with human-readable names
+                    feature_df = substitute_feature_names(
+                        feature_df,
+                        feature_index_col='codename',
+                        feature_names=feature_df['codename'].unique().tolist()
+                    )
+                    
+                    # Create mappings
+                    feature_idx_to_readable = dict(zip(feature_df['feature_idx'], feature_df['codename']))
+                    readable_to_idx = {v: k for k, v in feature_idx_to_readable.items()}
+                    
+                    # Create sorted display options
+                    feature_display_options = sorted(set(feature_df['codename'].tolist()))
+                    
+                    all_features_option = st.checkbox("Show all features", value=True, key="behavioral_show_all_features")
+                    
+                    if all_features_option:
+                        selected_feature_indices = list(trajectory_metrics.keys())
+                    else:
+                        selected_feature_display = st.multiselect(
+                            "Select features to display",
+                            options=feature_display_options,
+                            default=feature_display_options[:5],  # Default to first 5
+                            key="behavioral_selected_features",
+                        )
+                        # Map selected readable names back to feature indices
+                        selected_feature_indices = [readable_to_idx[readable] for readable in selected_feature_display]
+
+                    metrics_for_sampling = (
+                        trajectory_metrics.values()
+                        if all_features_option
+                        else [trajectory_metrics[idx] for idx in selected_feature_indices]
+                    )
+                    max_points_per_feature = max(
+                        (len(metrics.get("iterations", [])) for metrics in metrics_for_sampling),
+                        default=1,
+                    )
+                    points_per_feature = st.slider(
+                        "Behavioral signature dots per feature",
+                        min_value=1,
+                        max_value=max_points_per_feature,
+                        value=max_points_per_feature,
+                        step=1,
+                        key="behavioral_points_per_feature",
+                        help=(
+                            "Select how many phase-contracted points to show per feature. "
+                            "For example, 3 points show representative points from the first, "
+                            "second, and third thirds of training."
+                        ),
+                    )
+                    
+                    # Display the behavioral signatures plot with selected features
+                    with st.spinner("Generating behavioral signatures visualization..."):
+                        fig, _ = tree_analyzer.plot_behavioral_signatures(
+                            trajectory_metrics,
+                            figsize=(20, 12),
+                            save_path=None,
+                            selected_features=selected_feature_indices if not all_features_option else None,
+                            points_per_feature=points_per_feature,
+                            confusion_metric=confusion_metric,
+                        )
+                        st.pyplot(fig, width="content", use_container_width=True)
+                        
+                        # Display interpretation guide
+                        with st.expander("How to interpret these plots", expanded=False):
+                            st.markdown("""
+                            **Plot 1: Behavioral Signatures (Acceleration vs Confusion)**
+                            - **Each dot is one training-phase sample** for a feature (not an all-time average).
+                            - X-axis (**Confusion signal**): currently selected metric in the controls above.
+                              - High values: split is resolving broader, noisier uncertainty mass.
+                              - Low values: split is refining narrower or cleaner local slices.
+                            - Y-axis (**Acceleration**): slope change in cumulative gain at that moment.
+                              - Positive: contribution is ramping up.
+                              - Negative: contribution is tapering off or consolidating.
+                            - Dot color encodes **time** (lighter = early, darker = late), so timing must be read jointly with position.
+                            
+                            **Quadrants (read with color/time)**
+                            - **CONFLICT RESOLVER** (high confusion, +acceleration): feature is increasingly used to resolve hard/global uncertainty.
+                              - Light dots: early emergence.
+                              - Dark dots: late-stage conflict escalation.
+                            - **HIGH-VARIANCE PATCH** (low confusion, +acceleration): feature is increasingly active on local/heterogeneous pockets.
+                              - Light dots: early local patching.
+                              - Dark dots: late residual cleanup.
+                            - **EASY** (high confusion, -acceleration): feature was used on broad uncertainty but is now stabilizing/decaying.
+                              - Light dots: early coarse-fit settling.
+                              - Dark dots: late global stabilization.
+                            - **OUTLIER SPECIALIST** (low confusion, -acceleration): feature is tapering on local edge cases.
+                              - Light dots: early pruning of weak local effects.
+                              - Dark dots: late tail calibration/saturation.
+                            
+                            **Plot 2: Feature Acceleration Over Time**
+                            - Shows where each feature ramps up versus cools down across training.
+                            - Persistent sign flips suggest role-switching or collinearity.
+                            
+                            **Plot 3: Confusion Signal Over Time**
+                            - Tracks whether each feature is acting more globally (higher confusion) or locally (lower confusion) over time.
+                            - Rising curve: migration toward broader uncertainty resolution.
+                            - Falling curve: migration toward local/tail refinement.
+                            
+                            **Plot 4: Cumulative Gain Over Training**
+                            - Shows total optimization contribution of each feature
+                            - Steeper curves: More important features
+                            - Flat curves: Marginal features
+                            """)
+
+                    st.subheader("Feature Decision-Path Context Explorer")
+                    st.caption(
+                        "Follow each feature across individual tree paths to see where it acts as a late decider "
+                        "and which earlier scope-defining features precede it."
+                    )
+
+                    if hasattr(summary_traj, "explain") and getattr(summary_traj.explain, "trees", None):
+                        with st.spinner("Analyzing individual decision-tree paths..."):
+                            path_context = tree_analyzer.analyze_feature_decision_contexts(
+                                tree_entries=summary_traj.explain.trees,
+                                trajectory_metrics=trajectory_metrics,
+                                top_k=10,
+                            )
+
+                        profiles_df = pd.DataFrame(path_context.get("feature_profiles", []))
+                        if profiles_df.empty:
+                            st.info("No feature path-context profiles were extracted.")
+                        else:
+                            profiles_df["feature_idx"] = pd.to_numeric(
+                                profiles_df["feature_idx"], errors="coerce"
+                            ).fillna(-1).astype(int)
+                            profiles_df["feature_readable"] = profiles_df["feature_idx"].apply(
+                                lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                            )
+                            profiles_df["selector_label"] = profiles_df.apply(
+                                lambda row: f"{row['feature_readable']} ({int(row['feature_idx'])})",
+                                axis=1,
+                            )
+
+                            selected_label = st.selectbox(
+                                "Inspect feature path behavior",
+                                options=profiles_df.sort_values(
+                                    ["late_decider_rate", "path_count"], ascending=False
+                                )["selector_label"].tolist(),
+                                key="tree_path_context_feature_selector",
+                            )
+
+                            selected_row = profiles_df[
+                                profiles_df["selector_label"] == selected_label
+                            ].iloc[0]
+
+                            c1, c2, c3, c4 = st.columns(4)
+                            c1.metric("Path count", int(selected_row["path_count"]))
+                            c2.metric("Late decider rate", f"{float(selected_row['late_decider_rate']):.3f}")
+                            c3.metric("Decision impact score", f"{float(selected_row.get('decision_impact_score', 0.0)):.3f}")
+                            c4.metric("Scope entropy", f"{float(selected_row['scope_entropy']):.3f}")
+
+                            d1, d2, d3, d4 = st.columns(4)
+                            d1.metric("Late-decider in late training", f"{float(selected_row['late_in_late_training_rate']):.3f}")
+                            d2.metric("Mean |leaf| when late decider", f"{float(selected_row.get('mean_abs_leaf_when_late_decider', 0.0)):.4f}")
+                            d3.metric("Impact magnitude ratio", f"{float(selected_row.get('impact_magnitude_ratio', 0.0)):.3f}")
+                            d4.metric("Mean leaf when present", f"{float(selected_row.get('mean_leaf_value_when_present', 0.0)):.4f}")
+
+                            st.caption(
+                                "Top scope-defining features are those that repeatedly appear before the selected "
+                                "feature's late split point along root-to-leaf paths."
+                            )
+
+                            scope_rows = selected_row.get("top_scope_features", [])
+                            scope_df = pd.DataFrame(scope_rows)
+                            if not scope_df.empty:
+                                scope_df["feature_idx"] = pd.to_numeric(scope_df["feature_idx"], errors="coerce").fillna(-1).astype(int)
+                                scope_df["scope_feature"] = scope_df["feature_idx"].apply(
+                                    lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                                )
+                                scope_df = scope_df[["scope_feature", "cooccurrence_count", "cooccurrence_rate"]]
+                                st.dataframe(scope_df, width="content")
+                            else:
+                                st.info("No dominant scope-defining features found for this feature.")
+
+                            partner_rows = selected_row.get("top_near_leaf_partners", [])
+                            partner_df = pd.DataFrame(partner_rows)
+                            if not partner_df.empty:
+                                partner_df["feature_idx"] = pd.to_numeric(partner_df["feature_idx"], errors="coerce").fillna(-1).astype(int)
+                                partner_df["near_leaf_partner"] = partner_df["feature_idx"].apply(
+                                    lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                                )
+                                partner_df = partner_df[["near_leaf_partner", "cooccurrence_count", "cooccurrence_rate"]]
+                                with st.expander("Near-leaf co-decider partners", expanded=False):
+                                    st.dataframe(partner_df, width="content")
+
+                            candidate_rows = path_context.get("outlier_specialist_candidates", [])
+                            candidates_df = pd.DataFrame(candidate_rows)
+                            if not candidates_df.empty:
+                                candidates_df["feature_idx"] = pd.to_numeric(candidates_df["feature_idx"], errors="coerce").fillna(-1).astype(int)
+                                candidates_df["feature_name"] = candidates_df["feature_idx"].apply(
+                                    lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                                )
+                                st.markdown("**Outlier specialist candidates**")
+                                st.dataframe(
+                                    candidates_df[
+                                        [
+                                            "feature_name",
+                                            "path_count",
+                                            "late_decider_rate",
+                                            "decision_impact_score",
+                                            "mean_abs_leaf_when_late_decider",
+                                            "late_in_late_training_rate",
+                                            "scope_entropy",
+                                        ]
+                                    ],
+                                    width="content",
+                                )
+
+                            pair_rows = path_context.get("top_scope_to_decider_pairs", [])
+                            pairs_df = pd.DataFrame(pair_rows)
+                            if not pairs_df.empty:
+                                pairs_df["scope_feature"] = pairs_df["scope_feature_idx"].apply(
+                                    lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                                )
+                                pairs_df["decider_feature"] = pairs_df["decider_feature_idx"].apply(
+                                    lambda idx: _feature_idx_to_readable_name(int(idx), tree_analyzer.feature_names)
+                                )
+                                with st.expander("Global scope → decider co-occurrence pairs", expanded=False):
+                                    st.dataframe(
+                                        pairs_df[["scope_feature", "decider_feature", "cooccurrence_count"]],
+                                        width="content",
+                                    )
+                    else:
+                        st.info("No in-memory tree objects available for path-context analysis.")
+                else:
+                    st.warning("No trajectory metrics computed. Try re-running the setup.")
+            except Exception as e:
+                st.error(f"Error computing trajectory metrics: {e}")
+        else:
+            st.info("Model not available in session state. Run setup first to compute behavioral signatures.")
     else:
-        st.info("Select at least one metric to display the complexity plot.")
+        st.info("Summary trajectory not loaded. Run the Setup page first to analyze behavioral signatures.")
 
-    st.subheader("Leaf Value Statistics Over Iterations")
-    leaf_metric_options = ["leaf_mean", "leaf_std", "leaf_min", "leaf_max"]
-    selected_leaf_metrics = st.multiselect(
-        "Leaf stats to plot",
-        options=leaf_metric_options,
-        default=["leaf_mean", "leaf_std"],
-        key="tree_leaf_metrics",
-    )
 
-    if selected_leaf_metrics:
-        fig, ax = plt.subplots(figsize=(12, 5))
-        for metric in selected_leaf_metrics:
-            ax.plot(leaf_df["iteration"], leaf_df[metric], label=metric, alpha=0.9)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Value")
-        ax.set_title("Leaf Value Dynamics")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        st.pyplot(fig, width="content")
+
 
     st.subheader("Most Frequent Split Features")
     top_k_global = st.slider(
@@ -250,6 +526,12 @@ def render_tree_viewer_page() -> None:
         (interactions_df["iteration"] >= window_start)
         & (interactions_df["iteration"] <= window_end)
     ].copy()
+
+    window_interactions_df = _substitute_feature_column(
+        window_interactions_df, "left_feature_index", feature_names)
+    window_interactions_df = _substitute_feature_column(
+        window_interactions_df, "right_feature_index", feature_names)
+    
     if not window_interactions_df.empty:
         window_interactions_df["left_feature"] = window_interactions_df["left_feature_index"].apply(
             lambda value: _index_to_name(value, feature_names)

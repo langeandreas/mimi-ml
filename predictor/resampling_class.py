@@ -7,7 +7,7 @@ class Resampling:
     """conducts resampling to control model robustness"""
 
     def __init__(self, y: pd.DataFrame, data_all: pd.DataFrame, target: str, country: str, versioning: str, algorithm: str, sampling=None, sampling_strategy=None,
-                 random_state_list=[0, 42, 146, 590, 989]):
+                 random_state_list=[0, 42, 146, 590, 989], device=None):
 
         self.y = y
         self.data_all = data_all
@@ -18,6 +18,7 @@ class Resampling:
         self.country = country
         self.versioning = versioning
         self.algorithm = algorithm
+        self.device = device
 
     def xgboost_resampling_trainings(self):
         """
@@ -29,7 +30,7 @@ class Resampling:
 
         for i in self.random_state_list:
             classification = Classification(y=self.y, data_all=self.data_all, type_target=self.target, random_state=i,
-                                            sampling=self.sampling, sampling_strategy=self.sampling_strategy)
+                                            sampling=self.sampling, sampling_strategy=self.sampling_strategy, device=self.device)
             xgb_model = classification.xgbclassification()
             params = xgb_model.best_params_
             # save params

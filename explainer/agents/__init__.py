@@ -40,6 +40,7 @@ print(result["answer"])
 - **Generalist** (`generalist_agent.py`): Analyzes both SHAP and tree data
 - **SHAP Specialist** (`shap_specialist_agent.py`): Focused on feature importance
 - **Tree Specialist** (`tree_specialist_agent.py`): Focused on model structure
+- **Report Writer** (`report_writer_agent.py`): Produces stakeholder-facing, non-prescriptive reports
 - **Graph** (`explainer_graph.py`): Routes questions to specialists and synthesizes answers
 
 ### Adding New Agents
@@ -83,16 +84,25 @@ from explainer.agents.generalist_agent import (
     create_generalist_agent,
 )
 
-# SHAP specialist agent
-from explainer.agents.shap_specialist_agent import (
-    ask_shap_specialist,
-    create_shap_specialist_agent,
+from explainer.agents.final_state_agent import (
+    ask_final_shap_agent,
+    create_final_shap_agent,
 )
 
-# Tree specialist agent
-from explainer.agents.tree_specialist_agent import (
-    ask_tree_specialist,
-    create_tree_specialist_agent,
+# Trend analyst agent
+from explainer.agents.trend_analyst_agent import (
+    ask_trend_analyst,
+    create_trend_analyst_agent,
+)
+
+
+
+# Report writer agent
+from explainer.agents.report_writer_agent import (
+    DEFAULT_REPORT_AUDIENCE,
+    ReportAudience,
+    ask_report_writer_agent,
+    create_report_writer_agent,
 )
 
 # Graph orchestration
@@ -108,12 +118,17 @@ __all__ = [
     # Generalist
     "create_generalist_agent",
     "ask_generalist_agent",
-    # SHAP specialist
-    "create_shap_specialist_agent",
-    "ask_shap_specialist",
-    # Tree specialist
-    "create_tree_specialist_agent",
-    "ask_tree_specialist",
+    # Final SHAP
+    "create_final_shap_agent",
+    "ask_final_shap_agent",
+    # Trend analyst
+    "create_trend_analyst_agent",
+    "ask_trend_analyst",
+    # Report writer
+    "ReportAudience",
+    "DEFAULT_REPORT_AUDIENCE",
+    "create_report_writer_agent",
+    "ask_report_writer_agent",
     # Graph
     "build_explainer_graph",
     "run_explainer_graph",

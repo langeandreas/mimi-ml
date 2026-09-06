@@ -28,6 +28,20 @@ def shap_schema_hint(shap_json: Dict[str, Any]) -> str:
     )
 
 
+def final_explainability_schema_hint(payload: Dict[str, Any]) -> str:
+    """Return a short schema hint for compact final explainability payloads."""
+    if payload.get("summary_type") != "final_model_explainability":
+        return ""
+    if int(payload.get("schema_version", 1)) != 2:
+        return ""
+    return (
+        "\nCompact final explainability schema note: counts=train/test/features, "
+        "balance=train_pos_rate/test_pos_rate, confusion.norm_true is row-normalized by actual class, "
+        "shap.base is the expected value, shap.mean_abs is global mean absolute SHAP, and "
+        "shap.top_features rows follow shap.feature_row_format.\n"
+    )
+
+
 def load_json(path: str) -> Dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as fp:
         return json.load(fp)
