@@ -57,6 +57,7 @@ class CohortEngine:
         self.tree_engine = TreeEngine(booster, feature_names)
         self._decision_rules = None  # Cache
         self._sample_rule_mapping = None  # Cache
+        self._rule_sample_mapping = None  # Cache
     
     def extract_decision_rules(self) -> List[DecisionRule]:
         """
@@ -103,34 +104,38 @@ class CohortEngine:
         >>> assignments = engine.assign_samples_to_rules()
         >>> print(f"Sample 0 matches rules: {assignments.loc[0, 'assigned_rule_ids']}")
         """
+        if self._sample_rule_mapping is not None:
+            return self._sample_rule_mapping
+
         rules = self.extract_decision_rules()
         n_samples = len(self.X_train)
-        
-        # For each sample, find which rules it satisfies
-        sample_assignments = []
-        
-        for sample_idx in range(n_samples):
-            sample = self.X_train[sample_idx]
-            matched_rules = []
-            
-            for rule in rules:
-                if self._evaluate_rule(rule, sample):
-                    matched_rules.append(rule["rule_id"])
-            
-            sample_assignments.append({
-                "sample_index": sample_idx,
-                "assigned_rule_ids": matched_rules,
-            })
-        
-        # Update support counts in rules
-        rule_support = defaultdict(int)
-        for assignment in sample_assignments:
-            for rule_id in assignment["assigned_rule_ids"]:
-                rule_support[rule_id] += 1
-        
+        matched_rule_ids = [[] for _ in range(n_samples)]
+        rule_sample_mapping = {}
+
         for rule in rules:
-            rule["support_count"] = rule_support.get(rule["rule_id"], 0)
+            mask = np.ones(n_samples, dtype=bool)
+            for condition in rule["conditions"]:
+                feature_values = self.X_train[:, condition["feature_index"]]
+                if condition.get("operator", "<") == "<":
+                    mask &= feature_values < condition["threshold"]
+                else:
+                    mask &= feature_values >= condition["threshold"]
+
+            matched_indices = np.flatnonzero(mask)
+            rule["support_count"] = int(len(matched_indices))
+            rule_sample_mapping[rule["rule_id"]] = matched_indices
+            for sample_idx in matched_indices:
+                matched_rule_ids[int(sample_idx)].append(rule["rule_id"])
+
+        sample_assignments = [
+            {
+                "sample_index": sample_idx,
+                "assigned_rule_ids": rule_ids,
+            }
+            for sample_idx, rule_ids in enumerate(matched_rule_ids)
+        ]
         
+        self._rule_sample_mapping = rule_sample_mapping
         self._sample_rule_mapping = pd.DataFrame(sample_assignments)
         return self._sample_rule_mapping
     
@@ -170,6 +175,7 @@ class CohortEngine:
         self,
         min_support: Optional[int] = None,
         min_paths: Optional[int] = None,
+        include_shap: bool = False,
     ) -> List[CohortRecord]:
         """
         Aggregate similar rules into cohorts.
@@ -184,6 +190,8 @@ class CohortEngine:
             Minimum sample count per cohort. Uses config if not specified.
         min_paths : int, optional
             Minimum distinct paths per cohort. Uses config if not specified.
+        include_shap : bool
+            If True, compute local SHAP feature summaries for each cohort.
             
         Returns
         -------
@@ -196,19 +204,21 @@ class CohortEngine:
             min_paths = self.config["min_paths_per_cohort"]
         
         rules = self.extract_decision_rules()
-        assignments_df = self.assign_samples_to_rules()
+        self.assign_samples_to_rules()
         shap_values = None
-        try:
-            import shap
-            shap_values = shap.TreeExplainer(self.booster).shap_values(self.X_train)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[0]
-            shap_values = np.asarray(shap_values)
-        except (ImportError, ValueError, RuntimeError):
-            pass
+        if include_shap:
+            try:
+                import shap
+                shap_values = shap.TreeExplainer(self.booster).shap_values(self.X_train)
+                if isinstance(shap_values, list):
+                    shap_values = shap_values[0]
+                shap_values = np.asarray(shap_values)
+            except (ImportError, ValueError, RuntimeError):
+                pass
         global_leaf_scale = np.mean(
             [abs(rule["leaf_value"]) for rule in rules]
         ) if rules else 0.0
+        predictions = self.booster.predict(xgb.DMatrix(self.X_train))
         
         # Group rules by (scope_signature, decider_feature)
         # For now: use all conditions as scope_signature, last feature as decider
@@ -247,11 +257,8 @@ class CohortEngine:
             
             # Collect samples in this cohort
             cohort_samples = set()
-            for sample_idx in range(len(assignments_df)):
-                for rule in group_rules:
-                    if rule["rule_id"] in assignments_df.loc[sample_idx, "assigned_rule_ids"]:
-                        cohort_samples.add(sample_idx)
-                        break
+            for rule in group_rules:
+                cohort_samples.update(self._rule_sample_mapping[rule["rule_id"]])
             
             cohort_sample_list = list(cohort_samples)
             
@@ -260,10 +267,7 @@ class CohortEngine:
             risk_rate = float(np.mean(cohort_y))
             
             # Get predictions for confidence
-            cohort_pred_proba = self.booster.predict(
-                xgb.DMatrix(self.X_train[cohort_sample_list])
-            )
-            mean_confidence = float(np.mean(cohort_pred_proba))
+            mean_confidence = float(np.mean(predictions[cohort_sample_list]))
             
             # Decision impact (placeholder; will be enriched later)
             leaf_values = np.array([r["leaf_value"] for r in group_rules])

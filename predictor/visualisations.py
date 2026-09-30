@@ -27,7 +27,7 @@ def binary_distribution(y, mn: str, save: bool = False, stat='count', iso3=None,
     sns.displot(yplot, x=mn, binwidth=0.4, color=color, stat=stat)
 
     # Customize x-axis tick labels
-    plt.xticks(yplot[mn].value_counts().sort_values().index, fontsize=12, fontname='Open sans', fontweight='bold')
+    plt.xticks(yplot[mn].value_counts().sort_values().index, fontsize=12, fontname='Arial', fontweight='bold')
 
     # Set x-axis limits to create closer appearance of bars
     # plt.xlim(yplot[mn].value_counts().index.min() - 1, yplot[mn].value_counts().index.max() + 1)
@@ -35,12 +35,12 @@ def binary_distribution(y, mn: str, save: bool = False, stat='count', iso3=None,
 
     # Set x and y axis labels
     plt.xlabel('')
-    plt.ylabel('No. households (%)', fontsize=12, fontname='Open sans', fontweight='bold')
+    plt.ylabel('No. households (%)', fontsize=12, fontname='Arial', fontweight='bold')
 
     mn_dict = {'va_ai': 'Vitamin A', 'fol_ai': 'Folate', 'vb12_ai': 'Vitamin B12', 'fe_ai': 'Iron', 'zn_ai': 'Zinc', 'mimi_simple': 'Overall risk'}  # dictionary with full names
     mn_full = mn_dict[mn]
 
-    plt.title(f'{mn_full}', fontname='Open sans', fontsize=14, fontweight='bold')
+    plt.title(f'{mn_full}', fontname='Arial', fontsize=14, fontweight='bold')
 
     if save:
         plt.savefig(path + f'binary_distribution_{mn}_{iso3}.pdf', bbox_inches="tight")
@@ -83,9 +83,9 @@ def visualise_actual_predicted_map(geo_df, actual_predicted_perc, col, mn: str, 
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.axis('off')
     if title is None:
-        ax.set_title(f'{title_col} of risk of inadequate {mn} intake', loc='center', pad=10, fontdict={'fontsize': '17', 'fontname': 'Open sans', 'fontweight': 'bold'})
+        ax.set_title(f'{title_col} of risk of inadequate {mn} intake', loc='center', pad=10, fontdict={'fontsize': '17', 'fontname': 'Arial', 'fontweight': 'bold'})
     else:
-        ax.set_title(f'{title_col} {title}', loc='center', pad=10, fontdict={'fontsize': '17', 'fontname': 'Open sans', 'fontweight': 'bold'})
+        ax.set_title(f'{title_col} {title}', loc='center', pad=10, fontdict={'fontsize': '17', 'fontname': 'Arial', 'fontweight': 'bold'})
 
     sm = plt.cm.ScalarMappable(cmap=color, norm=plt.Normalize(vmin=vmin, vmax=vmax))  # Create colorbar as a legend
     # sm._A = [] #empty array for the data range
@@ -98,7 +98,7 @@ def visualise_actual_predicted_map(geo_df, actual_predicted_perc, col, mn: str, 
     # add admin names on the map
     for i in range(len(to_vis)):
         plt.text(to_vis.centroid.x[i], to_vis.centroid.y[i], "{}".format(to_vis['Name'][i]), size=adminsfontsize,
-                 fontname='Open sans')
+                 fontname='Arial')
     if save:
         plt.savefig(path+f'{iso3}_{mn}_{col}_{threshold}_risk_of_inadeq_admin1.pdf', bbox_inches="tight")
 
@@ -140,9 +140,9 @@ def barplots_sanity_wealth(predicted_actual_quantiles_weights: pd.DataFrame, col
     result.plot(kind='bar', figsize=(8, 4), color=['orange', 'skyblue'], alpha=0.6, edgecolor='grey')
 
     # Add labels and title
-    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.xlabel(title_x, fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.ylabel('Households (%)', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
+    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.xlabel(title_x, fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.ylabel('Households (%)', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
     plt.xticks(rotation=0, fontsize=18)
     plt.yticks(rotation=0, fontsize=18)
     plt.legend(bbox_to_anchor=(1, -0.08), ncol=1, frameon=False, fontsize=14)
@@ -191,9 +191,9 @@ def barplots_sanity_area(predicted_actual_urban_weights: pd.DataFrame, column: s
     result.plot(kind='bar', figsize=(8, 4), color=['orange', 'skyblue'], edgecolor='grey', alpha=0.6)
 
     # Add labels and title
-    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.xlabel(title_x, fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.ylabel('Households (%)', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
+    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.xlabel(title_x, fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.ylabel('Households (%)', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
     plt.xticks(rotation=0, fontsize=18)
     plt.yticks(rotation=0, fontsize=18)
     plt.legend(bbox_to_anchor=(1, -0.08), ncol=1, frameon=False, fontsize=14)
@@ -236,9 +236,9 @@ def create_roc_curve(mn: str, classification: classmethod, array_fpr: np.ndarray
     plt.plot(array_fpr, array_tpr, marker=None, label='XGBoost', color=color_dict['model'])
 
     # Add title and axis names
-    plt.xlabel('False positive rate', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.ylabel('True positive rate', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Open sans', 'fontweight': 'bold'})
+    plt.xlabel('False positive rate', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.ylabel('True positive rate', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Arial', 'fontweight': 'bold'})
     plt.xticks(rotation=0, fontsize=18)
     plt.yticks(rotation=0, fontsize=18)
     plt.legend(ncol=1, fontsize=14)
@@ -306,19 +306,19 @@ def scatterplot_actual_predicted_percentage(df1, limin, limax, diff_threshold, p
     plt.xlim(limin, limax)
     plt.ylim(limin, limax)
 
-    plt.xticks(fontsize=12, fontname='Open sans')
-    plt.yticks(fontsize=12, fontname='Open sans')
+    plt.xticks(fontsize=12, fontname='Arial')
+    plt.yticks(fontsize=12, fontname='Arial')
 
-    plt.xlabel('actual', fontsize=14, fontname='Open sans', fontweight='bold')
-    plt.ylabel('predicted', fontsize=14, fontname='Open sans', fontweight='bold')
+    plt.xlabel('actual', fontsize=14, fontname='Arial', fontweight='bold')
+    plt.ylabel('predicted', fontsize=14, fontname='Arial', fontweight='bold')
 
     for i in range(df1.shape[0]):
         if i in get_list_indexes(diff_threshold):
             plt.text(x=df1.actual[i], y=df1.predicted[i], s=df1['Name'][i],
-                     fontdict=dict(color='black', size=fontsize, fontname='Open sans'))
+                     fontdict=dict(color='black', size=fontsize, fontname='Arial'))
 
     plt.title(f'{title}',
-              fontdict=dict(color='black', size=15, fontname='Open sans', fontweight='bold'), pad=20)
+              fontdict=dict(color='black', size=15, fontname='Arial', fontweight='bold'), pad=20)
 
     if save:
         plt.savefig(path + f'scatterplot_percentage_actual_pred_admin1_{mn}_{iso3}.pdf', bbox_inches="tight")
@@ -349,9 +349,9 @@ def plot_precision_recall_curve(classification: object, array_recall, array_prec
     plt.legend()
 
     # Add title and axis names
-    plt.xlabel('Recall', fontdict={'fontsize': '12', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.ylabel('Precision', fontdict={'fontsize': '12', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.title(title, fontdict={'fontsize': '17', 'fontname': 'Open sans', 'fontweight': 'bold'})
+    plt.xlabel('Recall', fontdict={'fontsize': '12', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.ylabel('Precision', fontdict={'fontsize': '12', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.title(title, fontdict={'fontsize': '17', 'fontname': 'Arial', 'fontweight': 'bold'})
 
     if l_thresholds_perf is not None:
         # Add a symbol for a specific precision-recall pair
@@ -405,9 +405,9 @@ def plot_roc_curve(classification: object, array_fpr: np.ndarray, array_tpr: np.
     plt.legend(bbox_to_anchor=(1, -0.08), ncol=1, frameon=False, fontsize=14)
 
     # Add title and axis names
-    plt.xlabel('False positive rate', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.ylabel('True positve rate', fontdict={'fontsize': '20', 'fontname': 'Open sans', 'fontweight': 'bold'})
-    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Open sans', 'fontweight': 'bold'})
+    plt.xlabel('False positive rate', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.ylabel('True positve rate', fontdict={'fontsize': '20', 'fontname': 'Arial', 'fontweight': 'bold'})
+    plt.title(title, fontdict={'fontsize': '24', 'fontname': 'Arial', 'fontweight': 'bold'})
     plt.legend()
 
     # Remove the top and right spines

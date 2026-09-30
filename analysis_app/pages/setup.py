@@ -188,7 +188,12 @@ def render_setup_page() -> None:
             best_hyperparams_path = st.text_input(
                 "Model Hyperparameters Path", value=str(pipeline_config_data["best_hyperparams_path"])
             )
-            device = st.text_input("Device (optional)", value=str(pipeline_config_data["device"]))
+            device = st.selectbox(
+                "Device",
+                options=["cpu", "cuda"],
+                index=0 if str(pipeline_config_data["device"]).lower() != "cuda" else 1,
+                help="CPU is the default. Select CUDA only when CUDA_PATH is configured and a compatible GPU build is installed.",
+            )
             use_best_random_state = st.checkbox(
                 "Use best trained random state for classification",
                 value=bool(pipeline_config_data["use_best_random_state"]),

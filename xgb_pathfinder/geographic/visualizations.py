@@ -1,9 +1,7 @@
 """Geographic visualisation of tree-derived cohort and decision-path insights.
 
-Projects the cohorts produced by
-:class:`explainer.analysis.cohort_attribution_analyzer.CohortAttributionAnalyzer`
-onto administrative polygons, following the plotting conventions of
-:func:`predictor.visualisations.visualise_actual_predicted_map`.
+Projects cohorts produced by the attribution analysis pipeline
+onto administrative polygons.
 
 Pipeline::
 
@@ -23,10 +21,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
+from matplotlib.text import Text
 from shapely import wkt
 
-from .analysis.cohort_attribution_analyzer import CohortAttributionAnalyzer
-from .analysis.trajectory_utils import substitute_feature_names
+from explainer.analysis.cohort_attribution_analyzer import CohortAttributionAnalyzer
+from explainer.analysis.trajectory_utils import substitute_feature_names
 
 __all__ = [
     "load_admin_geodata",
@@ -486,11 +485,37 @@ def visualise_cohort_map(
         to_vis.plot(column="value", cmap=color, norm=norm, ax=ax, linewidth=0.8, edgecolors="grey", missing_kwds={"color": "lightgrey"})
 
     centroids = to_vis.geometry.to_crs(3857).centroid.to_crs(to_vis.crs)
+    annotations = []
     for i in range(len(to_vis)):
         label = to_vis["Name"].iloc[i]
         if mode == "dominant" and pd.notna(to_vis["cohort_id"].iloc[i]):
             label = f"{label}\n{to_vis['cohort_id'].iloc[i]}"
-        ax.text(centroids.x.iloc[i], centroids.y.iloc[i], label, size=adminsfontsize, ha="center", fontname="Open sans")
+        annotations.append(
+            ax.annotate(
+                label,
+                (centroids.x.iloc[i], centroids.y.iloc[i]),
+                xytext=(0, 0),
+                textcoords="offset points",
+                size=adminsfontsize,
+                ha="center",
+                va="center",
+                fontname="Arial",
+                arrowprops={"arrowstyle": "-", "color": "0.45", "linewidth": 0.6},
+            )
+        )
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    placed_boxes = []
+    for annotation in sorted(annotations, key=lambda item: Text.get_window_extent(item, renderer).y0):
+        box = Text.get_window_extent(annotation, renderer).expanded(1.08, 1.15)
+        attempts = 0
+        while any(box.overlaps(placed_box) for placed_box in placed_boxes) and attempts < 30:
+            annotation.set_position((0, (attempts + 1) * 8))
+            box = Text.get_window_extent(annotation, renderer).expanded(1.08, 1.15)
+            attempts += 1
+        placed_boxes.append(box)
+        annotation.arrow_patch.set_visible(bool(attempts))
 
     if save:
         plt.savefig(f"{path or ''}{iso3 or 'map'}_cohort_{mode}.pdf", bbox_inches="tight")
@@ -506,6 +531,8 @@ def visualise_region_decision_paths(
     hh_admin_df: pd.DataFrame,
     region_name: str,
     top_n: int = 5,
+    min_support: int = 1,
+    order_by: str = "confidence",
     max_conditions: int = 4,
     save: bool = False,
     path: Optional[str] = None,
@@ -518,12 +545,17 @@ def visualise_region_decision_paths(
     :param hh_admin_df: output of :func:`load_household_admin_mapping`
     :param region_name: admin region to explain
     :param top_n: number of cohorts to show
+    :param min_support: minimum households from the region required for a cohort
+    :param order_by: cohort ordering criterion, either ``'support'`` or ``'confidence'``
     :param max_conditions: conditions rendered per decision path
     :param save: save the figure
     :param path: directory prefix for the saved figure
     :param show: call ``plt.show()``; disable when embedding the figure elsewhere
     :return: the matplotlib axes pair
     """
+    if order_by not in {"support", "confidence"}:
+        raise ValueError("order_by must be either 'support' or 'confidence'")
+
     admin = hh_admin_df[hh_admin_df["Name"].map(_normalise_name) == _normalise_name(region_name)].copy()
     if admin.empty:
         raise ValueError(f"Region {region_name!r} not found in the household admin mapping.")
@@ -535,16 +567,33 @@ def visualise_region_decision_paths(
     if joined.empty:
         raise ValueError(f"No cohort households fall in region {region_name!r}.")
 
+    by_id = {c.get("cohort_id"): c for c in cohorts}
     total = admin["household_id"].nunique()
     ranking = (
         joined.groupby(["cohort_id", "decider_feature_name"], as_index=False)
         .agg(households=("household_id", "nunique"))
         .assign(share=lambda d: d["households"] / total)
-        .sort_values("share", ascending=False)
+        .assign(
+            predicted_inadequacy=lambda d: d["cohort_id"].map(
+                lambda cohort_id: float(
+                    by_id.get(cohort_id, {}).get(
+                        "mean_confidence",
+                        by_id.get(cohort_id, {}).get("risk_rate", 0.0),
+                    )
+                    or 0.0
+                )
+            )
+        )
+        .query("households >= @min_support")
+        .sort_values(
+            ["households", "predicted_inadequacy"]
+            if order_by == "support"
+            else ["predicted_inadequacy", "households"],
+            ascending=[False, False],
+        )
         .head(top_n)
     )
 
-    by_id = {c.get("cohort_id"): c for c in cohorts}
     fig, (ax_bar, ax_text) = plt.subplots(1, 2, figsize=(16, 1.6 * max(len(ranking), 3) + 2), gridspec_kw={"width_ratios": [1, 1.4]})
 
     ax_bar.barh(
@@ -555,7 +604,7 @@ def visualise_region_decision_paths(
         edgecolor="grey",
     )
     ax_bar.invert_yaxis()
-    ax_bar.set_xlabel("Share of region households", fontsize=12, fontname="Open sans", fontweight="bold")
+    ax_bar.set_xlabel("Share of region households", fontsize=12, fontname="Arial", fontweight="bold")
     ax_bar.set_title(f"Most common cohorts - {region_name}", loc="left", pad=10, fontdict=TITLE_FONT)
     ax_bar.spines["top"].set_visible(False)
     ax_bar.spines["right"].set_visible(False)

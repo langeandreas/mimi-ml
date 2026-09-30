@@ -18,6 +18,7 @@ from ..callbacks import ExplainerCallback
 from .trajectory_pipeline_config import TrajectoryPipelineConfig
 from .training_process_trajectories import TrajectorySummarizer
 from predictor.classification_class import Classification
+from xgb_pathfinder import ModelExplainer
 
 
 def run_classification_trajectory_pipeline(
@@ -45,6 +46,7 @@ def run_classification_trajectory_pipeline(
         shap_epsilon=config.shap_epsilon,
         shap_interval_min=config.shap_interval_min,
         shap_interval_max=config.shap_interval_max,
+        feature_names=list(data_all.columns),
     )
 
 
@@ -75,6 +77,17 @@ def run_classification_trajectory_pipeline(
         change_point_epsilon=config.change_point_epsilon,
         country_iso=config.country_iso,
         model_name=config.model_name,
+    )
+    callback_sample_count = len(explain.X_train)
+    callback_sample_ids = data_all.index[:callback_sample_count]
+    callback_labels = y.loc[callback_sample_ids, config.type_target].to_numpy()
+    estimator = model.best_estimator_ if hasattr(model, "best_estimator_") else model
+    summary_traj.sample_explainer = ModelExplainer(
+        booster=estimator.get_booster(),
+        X_train=explain.X_train,
+        y_train=callback_labels,
+        feature_names=list(data_all.columns),
+        sample_ids=callback_sample_ids,
     )
 
     artifacts: Dict[str, Any] = {

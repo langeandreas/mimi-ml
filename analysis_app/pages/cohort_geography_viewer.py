@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from analysis_app.config import DEFAULT_GEODATA_PATH, DEFAULT_HH_GEO_MAPPING_PATH
-from explainer.visualizations import (
+from xgb_pathfinder.geographic import (
     aggregate_cohorts_by_region,
     build_cohort_membership,
     load_admin_geodata,
@@ -159,10 +159,44 @@ def render_cohort_geography_page() -> None:
         key="geo_region_name",
     )
     top_n = st.slider("Cohorts to explain", 1, 10, 5, key="geo_region_top_n")
+    max_support = max(
+        int(
+            membership_df.loc[
+                membership_df["household_id"].isin(
+                    hh_admin_df.loc[hh_admin_df["Name"] == region_name, "household_id"]
+                )
+            ]
+            .groupby("cohort_id")["household_id"]
+            .nunique()
+            .max()
+        ),
+        1,
+    )
+    min_support = st.slider(
+        "Minimum cohort support (households)",
+        1,
+        max_support,
+        1,
+        key="geo_region_min_support",
+    )
+    order_by = st.radio(
+        "Order cohorts by",
+        options=["confidence", "support"],
+        format_func={"confidence": "Predicted inadequacy chance", "support": "Regional support"}.get,
+        horizontal=True,
+        key="geo_region_order_by",
+    )
 
     try:
         ax_bar, _ = visualise_region_decision_paths(
-            membership_df, cohorts, hh_admin_df, region_name, top_n=top_n, show=False
+            membership_df,
+            cohorts,
+            hh_admin_df,
+            region_name,
+            top_n=top_n,
+            min_support=min_support,
+            order_by=order_by,
+            show=False,
         )
         st.pyplot(ax_bar.get_figure())
     except Exception as exc:  # noqa: BLE001

@@ -309,17 +309,24 @@ def render_sample_viewer_page() -> None:
         st.warning("Could not access model booster from session state.")
         return
 
-    X_train = summary_traj.classification.train_test.get("X_train")
-    if X_train is None or len(X_train) == 0:
-        st.warning("Training features are unavailable in session state.")
-        return
-    X_df = X_train.copy() if isinstance(X_train, pd.DataFrame) else pd.DataFrame(X_train)
-    if X_df.empty:
-        st.warning("Training features are empty.")
+    sample_explainer = getattr(summary_traj, "sample_explainer", None)
+    if sample_explainer is None:
+        st.warning(
+            "This saved analysis does not include the xgb_pathfinder sample data. "
+            "Run Setup again to enable true-label sample filtering."
+        )
         return
 
-    y_train_raw = summary_traj.classification.train_test.get("Y_train")
-    y_arr = np.asarray(y_train_raw).reshape(len(y_train_raw), -1)[:, 0] if y_train_raw is not None else None
+    X_df = pd.DataFrame(
+        sample_explainer.X_train,
+        columns=sample_explainer.feature_names,
+        index=sample_explainer.sample_ids,
+    )
+    if X_df.empty:
+        st.warning("The xgb_pathfinder sample data is empty.")
+        return
+
+    y_arr = np.asarray(sample_explainer.y_train).reshape(-1)
 
     shap_history = list(getattr(summary_traj.explain, "shap_values_history", []))
     if not shap_history:
@@ -329,13 +336,14 @@ def render_sample_viewer_page() -> None:
     shap_history = sorted(shap_history, key=lambda item: int(item.get("iteration", 0)))
     shap_matrix = _normalize_shap_matrix(shap_history[-1]["shap_values"])
 
-    n_rows = min(int(X_df.shape[0]), int(shap_matrix.shape[0]))
+    n_rows = min(int(X_df.shape[0]), int(y_arr.shape[0]), int(shap_matrix.shape[0]))
     n_features = min(int(X_df.shape[1]), int(shap_matrix.shape[1]))
     if n_rows <= 0 or n_features <= 0:
         st.warning("Could not align SHAP and feature matrix for sample analysis.")
         return
 
     X_df = X_df.iloc[:n_rows, :n_features].copy()
+    y_arr = y_arr[:n_rows]
     shap_matrix = shap_matrix[:n_rows, :n_features]
     feature_names = [str(c) for c in X_df.columns]
 
@@ -348,12 +356,27 @@ def render_sample_viewer_page() -> None:
     st.subheader("Sample Selection")
     c1, c2, c3 = st.columns(3)
     with c1:
-        selected_sample_idx = st.number_input(
+        label_filter = st.selectbox(
+            "True label",
+            options=["All labels", "Positive (y=1)", "Negative (y=0)"],
+            key="sample_viewer_label_filter",
+        )
+
+        available_indices = list(range(n_rows))
+        if y_arr is not None:
+            labels = np.asarray(y_arr[:n_rows]).reshape(-1)
+            if label_filter == "Positive (y=1)":
+                available_indices = np.flatnonzero(labels == 1).astype(int).tolist()
+            elif label_filter == "Negative (y=0)":
+                available_indices = np.flatnonzero(labels == 0).astype(int).tolist()
+
+        if not available_indices:
+            st.warning("No samples match the selected true-label filter.")
+            return
+
+        selected_sample_idx = st.selectbox(
             "Sample index",
-            min_value=0,
-            max_value=max(n_rows - 1, 0),
-            value=0,
-            step=1,
+            options=available_indices,
             key="sample_viewer_selected_idx",
         )
     with c2:
@@ -563,15 +586,15 @@ def render_sample_viewer_page() -> None:
                 }
             )
 
-        details_df = pd.DataFrame(detail_rows).sort_values(
-            "feature_contribution",
-            key=lambda s: np.abs(s.astype(float)),
-            ascending=False,
-        )
-
+        details_df = pd.DataFrame(detail_rows)
         if details_df.empty:
             st.info("The selected feature did not appear on this sample's evaluated tree paths.")
         else:
+            details_df = details_df.sort_values(
+                "feature_contribution",
+                key=lambda s: np.abs(s.astype(float)),
+                ascending=False,
+            )
             st.dataframe(details_df.head(40), width="content")
 
     with st.expander("Raw sample values", expanded=False):

@@ -7,6 +7,7 @@ All metrics are designed to be serializable to JSON/CSV.
 
 from typing import TypedDict, List, Dict, Optional, Any, Tuple
 import numpy as np
+import pandas as pd
 
 
 # ============================================================================
@@ -67,7 +68,7 @@ class CohortRecord(TypedDict):
     risk_rate: float  # Empirical positive rate (0-1)
     mean_confidence: float  # Model's mean predicted probability
     late_decider_rate: float  # Fraction of paths where decider is late in tree
-    decision_impact: float  # Combined impact score (late_decider_rate * impact_magnitude)
+    decision_impact: float  # Mean absolute leaf value across contributing decision paths
     impact_magnitude_ratio: float  # Leaf impact relative to global mean
     leaf_values: List[float]  # Leaf values when decider is present
     top_features_by_shap: List[Tuple[str, float]]  # Top features by SHAP in this cohort
@@ -114,11 +115,18 @@ class RegionImpactMetric(TypedDict):
     """Impact metrics aggregated at the region level."""
     region_name: str
     region_id: Optional[str]  # Admin level identifier
+    impact_metric: str  # Selected regional aggregation metric
+    impact_label: str  # Human-readable metric label
+    impact_description: str  # Interpretation and limitations
     cohort_count: int  # Number of cohorts in region
-    total_impact: float  # Sum of impact across cohorts
-    avg_impact_per_cohort: float  # Mean impact per cohort
-    avg_impact_per_sample: float  # Impact normalized by population
-    total_support: int  # Total samples in region
+    total_impact: float  # Value of the selected impact_metric
+    mean_member_impact: float  # Mean path magnitude across memberships
+    cumulative_member_impact: float  # Sum of path magnitudes across memberships
+    membership_count: int  # Number of overlapping sample-cohort memberships
+    sample_count: int  # Number of represented samples in the region
+    avg_impact_per_cohort: float  # Mean path magnitude across distinct cohorts
+    avg_impact_per_sample: float  # Cumulative path magnitude per represented sample
+    total_support: int  # Deprecated alias for sample_count
     top_cohorts: List[Dict[str, Any]]  # Top 5 cohorts by impact
 
 
@@ -134,7 +142,7 @@ class ModelExplainerState(TypedDict, total=False):
     feature_names: List[str]  # Feature name list
     trajectory_metrics: Dict[str, FeatureTrajectory]  # All trajectory metrics
     feature_profiles: Dict[str, FeatureProfile]  # All feature profiles
-    cohorts: List[CohortRecord]  # Extracted cohorts
+    cohorts: pd.DataFrame  # One row per extracted cohort
     decision_rules: List[DecisionRule]  # All decision rules
     shap_values: Optional[np.ndarray]  # SHAP values from final model
     sample_to_cohort_mapping: Optional[Dict[int, List[str]]]  # Sample index -> cohort IDs
@@ -160,7 +168,7 @@ class PathfinderConfig(TypedDict, total=False):
     
     # Geographic aggregation
     admin_level: int  # Which administrative level (1=state, 2=district, etc.)
-    impact_metric: str  # "magnitude", "frequency", "magnitude_x_frequency"
+    impact_metric: str  # Regional metric name; default is "mean_member_impact"
     
     # Output & export
     top_k_features: int  # Top K features to include in profiles/exports

@@ -69,11 +69,19 @@ class ModelExplainer:
         y_train: np.ndarray,
         feature_names: Optional[List[str]] = None,
         config: Optional[PathfinderConfig] = None,
+        sample_ids: Optional[Any] = None,
     ):
         """Initialize explainer with model and data."""
         self.booster = booster
         self.X_train = np.asarray(X_train)
         self.y_train = np.asarray(y_train)
+        self.sample_ids = np.asarray(
+            X_train.index if sample_ids is None and isinstance(X_train, pd.DataFrame) else (
+                np.arange(len(self.X_train)) if sample_ids is None else sample_ids
+            )
+        )
+        if len(self.sample_ids) != len(self.X_train):
+            raise ValueError("sample_ids length must match the number of training samples")
         
         # Set feature names
         if feature_names is None:
@@ -125,7 +133,8 @@ class ModelExplainer:
         self,
         min_support: Optional[int] = None,
         include_feature_profiles: bool = False,
-    ) -> List[CohortRecord]:
+        include_shap: bool = False,
+    ) -> pd.DataFrame:
         """
         Extract cohorts (population segments) from decision tree paths.
         
@@ -140,21 +149,28 @@ class ModelExplainer:
             Minimum sample count per cohort. Uses config value if not specified.
         include_feature_profiles : bool
             If True, compute feature profiles for samples in each cohort (slower).
+        include_shap : bool
+            If True, compute local SHAP feature summaries for each cohort (slower).
             
         Returns
         -------
-        List[CohortRecord]
-            Sorted by decision_impact (highest first).
+        pd.DataFrame
+            One row per cohort, sorted by decision_impact (highest first).
             
         Examples
         --------
         >>> cohorts = explainer.extract_cohorts(min_support=20)
-        >>> for cohort in cohorts[:5]:
-        ...     print(f"Cohort {cohort['cohort_id']}: {cohort['support_count']} samples, "
-        ...           f"risk={cohort['risk_rate']:.2%}, impact={cohort['decision_impact']:.3f}")
+        >>> cohorts.head()
         """
-        cohorts = self._cohort_engine.build_cohorts(min_support=min_support)
-        self._ensure_state_computed()
+        cohort_records = self._cohort_engine.build_cohorts(
+            min_support=min_support,
+            include_shap=include_shap,
+        )
+        cohorts = pd.DataFrame.from_records(
+            cohort_records,
+            columns=CohortRecord.__annotations__,
+        )
+        self._ensure_state_computed(["decision_rules"])
         self._state["cohorts"] = cohorts
         self._state["decision_rules"] = self._cohort_engine.extract_decision_rules()
         if include_feature_profiles:
@@ -207,7 +223,7 @@ class ModelExplainer:
         >>> cohort_counts = segments['primary_cohort_id'].value_counts()
         """
         assignments = self._cohort_engine.assign_samples_to_rules().copy()
-        self._ensure_state_computed()
+        self._ensure_state_computed(["decision_rules"])
         rule_ids = {rule["rule_id"] for rule in (rules or self._state["decision_rules"])}
         assignments["assigned_rule_ids"] = assignments["assigned_rule_ids"].apply(
             lambda ids: [rule_id for rule_id in ids if rule_id in rule_ids]
@@ -215,7 +231,7 @@ class ModelExplainer:
         assignments["primary_rule_id"] = assignments["assigned_rule_ids"].apply(
             lambda ids: ids[0] if ids else None
         )
-        assignments["confidence"] = self.booster.predict(self.X_train)
+        assignments["confidence"] = self.booster.predict(xgb.DMatrix(self.X_train))
         return assignments
     
     # ========================================================================
@@ -227,12 +243,14 @@ class ModelExplainer:
         geodata_path: str,
         sample_region_mapping: Union[pd.DataFrame, Dict[int, str]],
         admin_level: Optional[int] = None,
-        impact_metric: str = "magnitude_x_frequency",
+        impact_metric: str = "mean_member_impact",
     ) -> Dict[str, RegionImpactMetric]:
         """
-        Aggregate cohort impact by geographic region.
-        
-        Ranks regions by positive prediction impact (not just frequency).
+        Summarize the magnitude of cohort decision paths represented in each region.
+
+        Cohorts are post-hoc groups of tree paths, not model inputs. These metrics
+        describe path magnitude and representation; they do not measure causal
+        dependence of predictions on a cohort.
         
         Parameters
         ----------
@@ -245,8 +263,10 @@ class ModelExplainer:
         admin_level : int, optional
             Administrative hierarchy level (1, 2, etc.). Uses config if not specified.
         impact_metric : str
-            How to compute impact: "magnitude" (mean), "frequency" (count),
-            or "magnitude_x_frequency" (product).
+            ``mean_member_impact`` (default) averages absolute leaf magnitude over
+            sample-cohort memberships. ``cumulative_member_impact`` sums those
+            magnitudes and is population-sensitive. ``distinct_cohort_count`` counts
+            represented cohorts.
             
         Returns
         -------
@@ -267,24 +287,27 @@ class ModelExplainer:
         cohorts = self.extract_cohorts()
         segments = self.get_segments()
         cohort_by_rule = {
-            rule_id: cohort["cohort_id"]
-            for cohort in cohorts
-            for rule_id in cohort["contributing_rules"]
+            rule_id: cohort.cohort_id
+            for cohort in cohorts.itertuples(index=False)
+            for rule_id in cohort.contributing_rules
         }
         sample_to_cohorts = {
-            int(row.sample_index): [
+            self.sample_ids[int(row.sample_index)]: [
                 cohort_by_rule[rule_id]
                 for rule_id in row.assigned_rule_ids
                 if rule_id in cohort_by_rule
             ]
             for row in segments.itertuples(index=False)
         }
-        aggregation = ImpactAggregator(cohorts, self.config).aggregate_by_region(
+        aggregation_config = dict(self.config)
+        if admin_level is not None:
+            aggregation_config["admin_level"] = admin_level
+        aggregation = ImpactAggregator(cohorts, aggregation_config).aggregate_by_region(
             sample_region_mapping,
             sample_to_cohort_mapping=sample_to_cohorts,
             impact_metric=impact_metric,
         )
-        self._ensure_state_computed()
+        self._ensure_state_computed(["decision_rules"])
         self._state["geographic_aggregation"] = aggregation
         return aggregation
     
@@ -293,11 +316,11 @@ class ModelExplainer:
         geodata_path: str,
         sample_region_mapping: Union[pd.DataFrame, Dict[int, str]],
         output_path: Optional[str] = None,
-        impact_metric: str = "magnitude_x_frequency",
+        impact_metric: str = "mean_member_impact",
         **plot_kwargs,
     ) -> Any:
         """
-        Create choropleth map of regions colored by cohort impact.
+        Map a clearly labeled regional cohort path metric.
         
         Parameters
         ----------
@@ -308,9 +331,16 @@ class ModelExplainer:
         output_path : str, optional
             Save map to file. If None, returns matplotlib/folium object.
         impact_metric : str
-            Impact computation method (see aggregate_by_region).
+            Regional metric selected as ``total_impact``: ``mean_member_impact``,
+            ``cumulative_member_impact``, or ``distinct_cohort_count``.
         **plot_kwargs
-            Additional kwargs to GeoPlotter (color_scale, figsize, etc.)
+            ``backend`` may be ``matplotlib`` (default) or ``folium``.
+            ``color_by`` may be ``total_impact``, ``mean_member_impact``,
+            ``cumulative_member_impact``, ``cohort_count``, ``sample_count``,
+            ``membership_count``, ``avg_impact_per_cohort``, or
+            ``avg_impact_per_sample``. Static maps also accept ``title``,
+            ``figsize``, ``cmap``, ``edgecolor``, and ``linewidth``. Interactive
+            maps accept ``title``, ``zoom_start``, ``fill_color``, and ``tiles``.
             
         Returns
         -------
@@ -322,14 +352,19 @@ class ModelExplainer:
         >>> fig = explainer.plot_geographic_impact(
         ...     geodata_path="admin_boundaries.geojson",
         ...     sample_region_mapping=mapping,
-        ...     output_path="impact_map.html",
+        ...     impact_metric="mean_member_impact",
+        ...     cmap="viridis",
         ... )
         """
+        admin_level = plot_kwargs.pop("admin_level", None)
         aggregation = self.aggregate_by_region(
-            geodata_path, sample_region_mapping, impact_metric=impact_metric
+            geodata_path,
+            sample_region_mapping,
+            admin_level=admin_level,
+            impact_metric=impact_metric,
         )
         plotter = GeoPlotter(aggregation)
-        plotter.load_geodata(geodata_path)
+        plotter.load_geodata(geodata_path, admin_level=admin_level)
         backend = plot_kwargs.pop("backend", "matplotlib")
         color_by = plot_kwargs.pop("color_by", "total_impact")
         if backend == "folium":
@@ -369,7 +404,7 @@ class ModelExplainer:
             "trajectory_metrics": self._state["trajectory_metrics"],
             "feature_profiles": self._state["feature_profiles"],
             "decision_rules": self._state["decision_rules"],
-            "cohorts": self._state["cohorts"],
+            "cohorts": self._state["cohorts"].to_dict(orient="records"),
         }
         if self._state.get("geographic_aggregation") is not None:
             payload["geographic_aggregation"] = self._state["geographic_aggregation"]
@@ -451,7 +486,10 @@ class ModelExplainer:
         if "feature_profiles" in requested and "feature_profiles" not in self._state:
             self._state["feature_profiles"] = self._feature_analyzer.build_profiles()
         if "cohorts" in requested and "cohorts" not in self._state:
-            self._state["cohorts"] = self._cohort_engine.build_cohorts()
+            self._state["cohorts"] = pd.DataFrame.from_records(
+                self._cohort_engine.build_cohorts(),
+                columns=CohortRecord.__annotations__,
+            )
         if "decision_rules" in requested and "decision_rules" not in self._state:
             self._state["decision_rules"] = self._cohort_engine.extract_decision_rules()
 

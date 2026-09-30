@@ -234,7 +234,7 @@ All types are fully documented with field descriptions.
 ### Core Analysis Methods
 ```python
 explainer.compute_trajectory_metrics()    # Returns: Dict[feature → trajectory]
-explainer.extract_cohorts(min_support)    # Returns: List[CohortRecord]
+explainer.extract_cohorts(min_support)    # Returns: DataFrame (one row per cohort)
 explainer.get_feature_profiles()          # Returns: Dict[feature → profile]
 explainer.get_segments(rules)             # Returns: DataFrame
 ```

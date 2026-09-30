@@ -1,0 +1,10 @@
+,0,1,target,country,sampling,feat_version,algorithm,best_random_state
+0,accuracy,0.642,overall_mar,lka,undersampling,v3,xgboost,0
+1,balanced accuracy,0.642,overall_mar,lka,undersampling,v3,xgboost,0
+2,adj_balanced_accuracy,0.285,overall_mar,lka,undersampling,v3,xgboost,0
+3,recall,0.632,overall_mar,lka,undersampling,v3,xgboost,0
+4,precision,0.66,overall_mar,lka,undersampling,v3,xgboost,0
+5,specificity,0.347,overall_mar,lka,undersampling,v3,xgboost,0
+6,f1_score,0.646,overall_mar,lka,undersampling,v3,xgboost,0
+7,average_pre_recall,0.72,overall_mar,lka,undersampling,v3,xgboost,0
+8,rocauc_score,0.7007327557704549,overall_mar,lka,undersampling,v3,xgboost,0

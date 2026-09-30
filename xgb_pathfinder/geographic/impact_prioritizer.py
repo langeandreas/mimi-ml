@@ -1,36 +1,36 @@
 """
 Impact prioritizer for xgb-pathfinder.
 
-Ranks regions/cohorts by positive prediction impact rather than raw frequency.
-Impact combines: prediction magnitude × support count (frequency).
+Ranks regions/cohorts with a heuristic combining path magnitude, confidence,
+and support. This score is for prioritization and is not causal dependence.
 """
 
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Mapping, Tuple, Optional
 import numpy as np
 import pandas as pd
 
-from ..types import CohortRecord, RegionImpactMetric
+from ..types import RegionImpactMetric
 
 
 class ImpactPrioritizer:
     """
-    Rank regions and cohorts by impact (not frequency).
+    Rank regions and cohorts with a configurable heuristic score.
     
-    Impact = (prediction magnitude × mean confidence) × support
+    The score combines normalized path magnitude, confidence, and support.
     
     Parameters
     ----------
-    cohorts : List[CohortRecord]
-        List of cohorts with metrics.
+    cohorts : pd.DataFrame
+        Extracted cohorts with one row per cohort.
     """
     
-    def __init__(self, cohorts: List[CohortRecord]):
+    def __init__(self, cohorts: pd.DataFrame):
         """Initialize prioritizer."""
         self.cohorts = cohorts
     
     def compute_impact_score(
         self,
-        cohort: CohortRecord,
+        cohort: Mapping[str, Any],
         weight_magnitude: float = 0.5,
         weight_confidence: float = 0.3,
         weight_support: float = 0.2,
@@ -40,7 +40,7 @@ class ImpactPrioritizer:
         
         Parameters
         ----------
-        cohort : CohortRecord
+        cohort : Mapping[str, Any]
             Cohort to score.
         weight_magnitude : float
             Weight for decision_impact metric (0-1).
@@ -96,7 +96,7 @@ class ImpactPrioritizer:
         """
         ranked = []
         
-        for cohort in self.cohorts:
+        for cohort in self.cohorts.to_dict(orient="records"):
             score = self.compute_impact_score(
                 cohort,
                 weight_magnitude=weight_magnitude,

@@ -23,10 +23,10 @@ A generalized, SHAP-like package for explaining XGBoost tree-based models throug
    - Decider feature: Primary decision-making feature
    - Enriched metrics: Support count, risk rate, decision impact, local SHAP summary
 
-3. **Geographic Impact** — Regional aggregation prioritizing prediction impact over frequency
-   - Impact = prediction magnitude × support count
-   - Outlier specialist identification
-   - Scope→decider relationship graphs
+3. **Geographic Cohort Summaries** — Where cohort decision paths are represented
+    - Mean or cumulative absolute leaf magnitude across household-cohort memberships
+    - Regional sample, membership, and distinct-cohort counts
+    - Descriptive path evidence, not causal dependence on a cohort
 
 ---
 
@@ -73,11 +73,11 @@ for feat_name, traj in trajectories.items():
 
 # Extract cohorts (population segments)
 cohorts = explainer.extract_cohorts(min_support=20)
-for cohort in cohorts[:5]:
-    print(f"Cohort {cohort['cohort_id']}: "
-          f"{cohort['support_count']} samples, "
-          f"risk={cohort['risk_rate']:.2%}, "
-          f"impact={cohort['decision_impact']:.3f}")
+for cohort in cohorts.head().itertuples(index=False):
+    print(f"Cohort {cohort.cohort_id}: "
+          f"{cohort.support_count} samples, "
+          f"risk={cohort.risk_rate:.2%}, "
+          f"impact={cohort.decision_impact:.3f}")
 
 # Get comprehensive feature profiles
 profiles = explainer.get_feature_profiles()
@@ -91,7 +91,7 @@ for feat_name, profile in profiles.items():
 regions = explainer.aggregate_by_region(
     geodata_path="admin_boundaries.geojson",
     sample_region_mapping=sample_to_region_mapping,
-    impact_metric="magnitude_x_frequency",
+    impact_metric="mean_member_impact",
 )
 
 # Visualize impact
@@ -107,6 +107,51 @@ explainer.to_json("output.json")
 data = explainer.to_dict()
 ```
 
+### Interpreting Regional Cohort Metrics
+
+A cohort is a post-hoc group of repeated XGBoost decision paths. It is not an
+input feature, so regional cohort metrics do **not** say that a prediction
+causally depends on a cohort.
+
+- `mean_member_impact` (default): mean absolute leaf value across all
+    sample-cohort memberships in a region. Use this to compare typical path
+    magnitude while limiting the effect of regional sample size.
+- `cumulative_member_impact`: sum of those magnitudes. Use this when both path
+    magnitude and the number of memberships should matter; larger regions tend
+    to score higher.
+- `distinct_cohort_count`: number of different extracted cohorts represented
+    in the region. This measures diversity, not prediction magnitude.
+
+Each regional result includes `impact_label`, `impact_description`,
+`sample_count`, `membership_count`, `mean_member_impact`, and
+`cumulative_member_impact`. Map titles, legends, and captions use the same
+metadata automatically.
+
+```python
+# Typical path magnitude, comparable across differently sized regions
+exp.plot_geographic_impact(geodata_path, mapping)
+
+# Total path magnitude, including regional membership frequency
+exp.plot_geographic_impact(
+    geodata_path, mapping, impact_metric="cumulative_member_impact"
+)
+
+# Representation and coverage maps
+exp.plot_geographic_impact(geodata_path, mapping, color_by="sample_count")
+exp.plot_geographic_impact(geodata_path, mapping, color_by="membership_count")
+exp.plot_geographic_impact(geodata_path, mapping, color_by="cohort_count")
+
+# Interactive map
+interactive = exp.plot_geographic_impact(
+    geodata_path,
+    mapping,
+    backend="folium",
+    fill_color="YlGnBu",
+    zoom_start=7,
+)
+interactive.save("regional_cohorts.html")
+```
+
 ---
 
 ## Module Structure
@@ -117,7 +162,7 @@ data = explainer.to_dict()
 
 Public methods:
 - `compute_trajectory_metrics()` → Dict[feature → trajectory metrics]
-- `extract_cohorts(min_support)` → List[CohortRecord]
+- `extract_cohorts(min_support)` → DataFrame with one row per cohort
 - `get_feature_profiles()` → Dict[feature → profile]
 - `get_segments(rules)` → DataFrame with sample-to-cohort mapping
 - `aggregate_by_region(geodata, mapping)` → Dict[region → impact metrics]
@@ -141,9 +186,14 @@ Public methods:
 | Module | Responsibility |
 |--------|-----------------|
 | `impact_aggregator.py` | Aggregate cohorts by region |
-| `impact_prioritizer.py` | Rank regions by positive prediction impact |
+| `impact_prioritizer.py` | Rank regions with a configurable heuristic path score |
 | `geo_plotter.py` | Choropleth visualization (matplotlib/folium) |
 | `mappings.py` | Admin hierarchy & sample→region utilities |
+| `visualizations.py` | Dataframe-based loaders, cohort maps, regional summaries, and decision paths |
+
+The dataframe-based geography helpers are available from
+`xgb_pathfinder.geographic` and the package root, including
+`visualise_region_decision_paths(..., min_support=1, order_by="confidence")`.
 
 ### Type Definitions (`types.py`)
 
@@ -344,7 +394,7 @@ explainer.to_json("results/pathfinder.json")
 2. ✅ **SHAP-like Interface**: Familiar API for users of SHAP package
 3. ✅ **Configurable**: All thresholds and parameters customizable
 4. ✅ **Layered**: Extract → Trajectory → Enrichment → Visualization
-5. ✅ **Impact-Driven**: Geographic ranking by prediction impact, not frequency
+5. ✅ **Explicit Metrics**: Geographic summaries label path magnitude and representation separately
 6. ✅ **Exportable**: JSON, CSV, Dict formats for integration
 7. ✅ **XGBoost-Specific** (with future extensibility)
 

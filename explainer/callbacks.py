@@ -1,3 +1,5 @@
+import json
+
 import xgboost as xgb
 from xgboost.callback import TrainingCallback
 import shap
@@ -15,6 +17,7 @@ class ExplainerCallback(TrainingCallback):
         shap_epsilon: Optional[float] = None,
         shap_interval_min: int = 5,
         shap_interval_max: int = 100,
+        feature_names: Optional[List[str]] = None,
     ):
         """
         Initialize the callback.
@@ -38,6 +41,7 @@ class ExplainerCallback(TrainingCallback):
             raise ValueError("shap_epsilon must be > 0 when provided")
 
         self.X_train = X_train[:shap_sample_size]
+        self.feature_names = list(feature_names or [])
         self.trees = []
         self.shap_values_history = []
         self.shap_interval = int(shap_interval)
@@ -84,7 +88,7 @@ class ExplainerCallback(TrainingCallback):
         tree_dump = booster.get_dump(dump_format='json')
         self.trees.append({
             'iteration': iteration,
-            'tree': tree_dump[-1] if tree_dump else None
+            'tree': self._restore_feature_names(tree_dump[-1]) if tree_dump else None
         })
         
         # Calculate SHAP values at fixed or adaptively scheduled checkpoints.
@@ -107,6 +111,27 @@ class ExplainerCallback(TrainingCallback):
                 self._next_shap_iteration = iteration + self.shap_interval
 
         return False
+
+    def _restore_feature_names(self, tree_json: str) -> str:
+        """Replace NumPy-backed XGBoost split names (``f0``, ``f1``) with labels."""
+        if not self.feature_names:
+            return tree_json
+
+        tree = json.loads(tree_json)
+
+        def rename(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            split = node.get("split")
+            if isinstance(split, str) and split.startswith("f") and split[1:].isdigit():
+                index = int(split[1:])
+                if index < len(self.feature_names):
+                    node["split"] = self.feature_names[index]
+            for child in node.get("children", []):
+                rename(child)
+
+        rename(tree)
+        return json.dumps(tree)
     
     def get_trees(self) -> List[Dict[str, Any]]:
         """Return collected tree structures."""

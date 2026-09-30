@@ -21,7 +21,7 @@ DEFAULT_CONFIG: PathfinderConfig = {
     
     # Geographic aggregation
     "admin_level": 2,  # Default to admin level 2 (district/county equivalent)
-    "impact_metric": "magnitude_x_frequency",  # Combine impact magnitude with frequency
+    "impact_metric": "mean_member_impact",  # Mean cohort path magnitude across memberships
     
     # Output & export
     "top_k_features": 15,  # Include top 15 features in reports

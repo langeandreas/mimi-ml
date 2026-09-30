@@ -19,7 +19,7 @@ class TrajectoryPipelineConfig:
     targets_path: str
     model_name: str
 
-    device: Optional[str] = 'cuda'
+    device: Optional[str] = 'cpu'
     use_best_random_state: bool = True
     random_state: int = 0
     cross_country: bool = False

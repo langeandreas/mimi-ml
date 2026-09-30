@@ -27,6 +27,15 @@ from .types import (
     ModelExplainerState,
 )
 from .config import DEFAULT_CONFIG
+from .geographic import (
+    load_admin_geodata,
+    load_household_admin_mapping,
+    build_cohort_membership,
+    aggregate_cohorts_by_region,
+    visualise_cohort_map,
+    visualise_region_decision_paths,
+    plot_cohort_geography,
+)
 
 __version__ = "0.1.0"
 __author__ = "xgb-pathfinder Contributors"
@@ -42,4 +51,11 @@ __all__ = [
     "PathfinderConfig",
     "ModelExplainerState",
     "DEFAULT_CONFIG",
+    "load_admin_geodata",
+    "load_household_admin_mapping",
+    "build_cohort_membership",
+    "aggregate_cohorts_by_region",
+    "visualise_cohort_map",
+    "visualise_region_decision_paths",
+    "plot_cohort_geography",
 ]

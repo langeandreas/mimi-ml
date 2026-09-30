@@ -6,15 +6,54 @@ Uses geopandas + matplotlib for static maps or folium for interactive maps.
 """
 
 from typing import Dict, Optional, Union, Any, List
+from textwrap import fill
 import numpy as np
 import pandas as pd
 
 from ..types import RegionImpactMetric
 
 
+_REGION_VALUE_METADATA = {
+    "mean_member_impact": (
+        "Mean cohort path magnitude",
+        "Mean absolute XGBoost leaf value across sample-cohort memberships in the region.",
+    ),
+    "cumulative_member_impact": (
+        "Cumulative cohort path magnitude",
+        "Sum of cohort path magnitudes across memberships; sensitive to regional sample size.",
+    ),
+    "cohort_count": ("Distinct cohort count", "Number of distinct cohorts represented in the region."),
+    "sample_count": ("Represented sample count", "Number of mapped model samples represented in the region."),
+    "membership_count": (
+        "Sample-cohort membership count",
+        "Number of overlapping sample-to-cohort assignments represented in the region.",
+    ),
+    "avg_impact_per_cohort": (
+        "Mean magnitude per distinct cohort",
+        "Mean path magnitude across the distinct cohorts represented in the region.",
+    ),
+    "avg_impact_per_sample": (
+        "Cumulative path magnitude per sample",
+        "Cumulative cohort path magnitude divided by represented regional samples.",
+    ),
+}
+
+
+def _value_metadata(metric: Dict[str, Any], color_by: str) -> tuple[str, str]:
+    if color_by == "total_impact":
+        return (
+            metric.get("impact_label", "Regional cohort metric"),
+            metric.get("impact_description", ""),
+        )
+    return _REGION_VALUE_METADATA.get(
+        color_by,
+        (color_by.replace("_", " ").title(), ""),
+    )
+
+
 class GeoPlotter:
     """
-    Create geographic visualizations of cohort impact by region.
+    Visualize regional summaries of cohort decision-path magnitude.
     
     Parameters
     ----------
@@ -33,7 +72,7 @@ class GeoPlotter:
         self.region_aggregation = region_aggregation
         self.geodata = geodata
     
-    def load_geodata(self, geodata_path: str) -> Any:
+    def load_geodata(self, geodata_path: str, admin_level: Optional[int] = None) -> Any:
         """
         Load geographic data from file.
         
@@ -54,8 +93,11 @@ class GeoPlotter:
                 "Install with: pip install geopandas"
             )
         
-        if geodata_path.endswith(".json") or geodata_path.endswith(".geojson"):
-            gdf = gpd.read_file(geodata_path)
+        if geodata_path.lower().endswith(".csv"):
+            from .visualizations import load_admin_geodata
+
+            level = admin_level or 2
+            gdf = load_admin_geodata(geodata_path, admin_level=f"adm{level}")
         else:
             gdf = gpd.read_file(geodata_path)
         
@@ -65,9 +107,12 @@ class GeoPlotter:
     def plot_choropleth_matplotlib(
         self,
         output_path: Optional[str] = None,
-        title: str = "Cohort Impact by Region",
+        title: Optional[str] = None,
         color_by: str = "total_impact",
         figsize: tuple = (12, 10),
+        cmap: str = "YlOrRd",
+        edgecolor: str = "black",
+        linewidth: float = 0.5,
         **kwargs,
     ) -> Any:
         """
@@ -77,13 +122,19 @@ class GeoPlotter:
         ----------
         output_path : str, optional
             Save to file. If None, returns figure.
-        title : str
-            Map title.
+        title : str, optional
+            Map title. By default, names the selected regional metric.
         color_by : str
             Which metric to color by: "total_impact", "avg_impact_per_cohort", 
             "total_support", "cohort_count".
         figsize : tuple
             Figure size (width, height).
+        cmap : str
+            Matplotlib colormap name.
+        edgecolor : str
+            Polygon boundary color.
+        linewidth : float
+            Polygon boundary width.
         **kwargs
             Additional kwargs to gdf.plot() (edgecolor, linewidth, etc.)
             
@@ -105,9 +156,13 @@ class GeoPlotter:
         # Merge region data
         region_names = list(self.region_aggregation.keys())
         metric_values = [self.region_aggregation[rn][color_by] for rn in region_names]
+        metric = next(iter(self.region_aggregation.values()), {})
+        metric_label, metric_description = _value_metadata(metric, color_by)
+        if title is None:
+            title = f"{metric_label} by Region"
         
         # Assume geodata has a 'name' or first string column with region names
-        region_col = next(
+        region_col = "Name" if "Name" in gdf.columns else next(
             (col for col in gdf.columns if col != "geometry" and gdf[col].dtype == object),
             gdf.columns[0],
         )
@@ -119,30 +174,25 @@ class GeoPlotter:
         
         # Plot
         fig, ax = plt.subplots(figsize=figsize)
+        legend_kwargs = kwargs.pop("legend_kwds", {})
+        legend_kwargs.setdefault("label", metric_label)
         gdf.plot(
             column="impact_value",
             ax=ax,
             legend=True,
-            cmap="YlOrRd",
-            edgecolor="black",
-            linewidth=0.5,
+            legend_kwds=legend_kwargs,
+            cmap=cmap,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
             **kwargs,
         )
         
         ax.set_title(title, fontsize=14, fontweight="bold")
         ax.set_xlabel("")
         ax.set_ylabel("")
-        
-        # Add colorbar
-        sm = plt.cm.ScalarMappable(
-            cmap="YlOrRd",
-            norm=plt.Normalize(
-                vmin=gdf["impact_value"].min(),
-                vmax=gdf["impact_value"].max(),
-            ),
-        )
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label="Impact Score")
+        if metric_description:
+            fig.text(0.5, 0.02, fill(metric_description, width=100), ha="center", fontsize=9)
+            fig.subplots_adjust(bottom=0.12)
         
         if output_path:
             fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -152,9 +202,11 @@ class GeoPlotter:
     def plot_choropleth_folium(
         self,
         output_path: Optional[str] = None,
-        title: str = "Cohort Impact by Region",
+        title: Optional[str] = None,
         color_by: str = "total_impact",
         zoom_start: int = 5,
+        fill_color: str = "YlOrRd",
+        tiles: str = "OpenStreetMap",
     ) -> Any:
         """
         Create interactive choropleth map using folium.
@@ -163,12 +215,16 @@ class GeoPlotter:
         ----------
         output_path : str, optional
             Save to HTML file. If None, returns map object.
-        title : str
-            Map title.
+        title : str, optional
+            Map title. By default, names the selected regional metric.
         color_by : str
             Which metric to color by.
         zoom_start : int
             Initial zoom level.
+        fill_color : str
+            Folium/ColorBrewer sequential color scheme.
+        tiles : str
+            Folium base-tile provider.
             
         Returns
         -------
@@ -190,7 +246,11 @@ class GeoPlotter:
         geojson_data = json.loads(self.geodata.to_json())
         
         # Extract impact values
-        region_col = next(
+        metric = next(iter(self.region_aggregation.values()), {})
+        metric_label, metric_description = _value_metadata(metric, color_by)
+        if title is None:
+            title = f"{metric_label} by Region"
+        region_col = "Name" if "Name" in self.geodata.columns else next(
             (col for col in self.geodata.columns if col != "geometry" and self.geodata[col].dtype == object),
             self.geodata.columns[0],
         )
@@ -212,7 +272,7 @@ class GeoPlotter:
         m = folium.Map(
             location=[center_lat, center_lon],
             zoom_start=zoom_start,
-            tiles="OpenStreetMap",
+            tiles=tiles,
         )
         
         # Add choropleth
@@ -225,14 +285,17 @@ class GeoPlotter:
             ),
             columns=[region_col, color_by],
             key_on=f"feature.properties.{region_col}",
-            fill_color="YlOrRd",
+            fill_color=fill_color,
             fill_opacity=0.7,
             line_opacity=0.2,
-            legend_name=f"Impact ({color_by})",
+            legend_name=metric_label,
         ).add_to(m)
         
         # Add title
-        title_html = f'<h3 align="center" style="font-size:16px"><b>{title}</b></h3>'
+        title_html = (
+            f'<div align="center"><h3 style="font-size:16px"><b>{title}</b></h3>'
+            f'<p style="font-size:12px">{metric_description}</p></div>'
+        )
         m.get_root().html.add_child(folium.Element(title_html))
         
         if output_path:

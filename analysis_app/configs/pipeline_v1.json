@@ -5,7 +5,7 @@
   "features_path": "C:\\Users\\Andreas\\projects\\mimi-ml\\data\\lka\\sri_lanka_features19_updated.csv",
   "targets_path": "C:\\Users\\Andreas\\projects\\mimi-ml\\data\\lka\\ML_targets_lka.csv",
   "model_name": "xgboost",
-  "device": "cuda",
+  "device": "cpu",
   "random_state": "",
   "cross_country": false,
   "sampling": "undersampling",

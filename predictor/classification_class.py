@@ -21,7 +21,6 @@ from sklearn.metrics import roc_auc_score
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import GroupKFold
 from imblearn.metrics import specificity_score
-import cupy as cp
 import os
 
 
@@ -29,30 +28,32 @@ class Classification:
 
     """trains classifiers and calculates the performance"""
 
-    def __init__(self, y, data_all, type_target, device=None, verbose=False, random_state=42, cross_country=False, sampling=None, sampling_strategy=None, train_indexes=None, callbacks=None):
+    def __init__(self, y, data_all, type_target, device='cpu', verbose=False, random_state=42, cross_country=False, sampling=None, sampling_strategy=None, train_indexes=None, callbacks=None):
 
         self.data = y.join(data_all)
         self.type_target = type_target
         self.random_state = random_state
-        self.device = device
-        if device == 'cuda':
+        self.device = device or 'cpu'
+        if self.device == 'cuda':
             cuda_path = os.environ.get('CUDA_PATH')
             if cuda_path is None:
                 raise ValueError("CUDA_PATH environment variable not set. Please set CUDA_PATH to use CUDA device.")
             self.cuda_path = cuda_path
+        elif self.device != 'cpu':
+            raise ValueError("device must be either 'cpu' or 'cuda'")
         self.verbose = verbose
         # self.cross_validation = {'k_fold': KFold(n_splits=5, random_state=self.random_state, shuffle=True), 'group_k_fold': GroupKFold(n_splits=5)}
         self.scoring = 'f1'
         self._train_test = {}  # true attribute
         self.sampling = sampling
         self.params = {
-            'n_estimators': [100, 200, 500],
-            'learning_rate': [0.01, 0.05, 0.1],
-            'booster': ['gbtree', 'gblinear'],
-            'gamma': [0, 0.5, 1],
-            'reg_alpha': [0, 0.5, 1],
-            'reg_lambda': [0.5, 1, 5],
-            'max_depth': [3, 4, 5, 6]
+            'n_estimators': [200],
+            'learning_rate': [0.05],
+            'booster': ['gbtree'],
+            'gamma': [0],
+            'reg_alpha': [0],
+            'reg_lambda': [5],
+            'max_depth': [5]
             # 'base_score': [0.30, 0.4]
         }
         self.callbacks = callbacks
@@ -155,10 +156,9 @@ class Classification:
         else:
             raise ValueError(f"cvmethod {cvmethod} not supported, must be 'k_fold' or 'group_k_fold'")
            
-        #tree_method = 'gpu_hist' if self.device == 'cuda' else 'hist'
-
         # fit model no training data
-        clf_xgb = XGBClassifier(random_state=self.random_state)
+        training_params = {"tree_method": "gpu_hist" if self.device == "cuda" else "hist"}
+        clf_xgb = XGBClassifier(random_state=self.random_state, **training_params)
 
         xgb_grid = GridSearchCV(estimator=clf_xgb, param_grid=self.params, n_jobs=-1, cv=cv, scoring=self.scoring)
 
@@ -183,9 +183,16 @@ class Classification:
 
         best_params = pd.read_csv(path, index_col=0).T.to_dict()[0]
 
+        best_params = dict(best_params)
+        best_params.setdefault("tree_method", "gpu_hist" if self.device == "cuda" else "hist")
         clf_xgb = XGBClassifier(random_state=self.random_state, callbacks=self.callbacks, **best_params)  # base_score=0.3, objective='binary:logistic')
 
-        best_model = clf_xgb.fit(self.train_test['X_train'], self.train_test['Y_train'])
+        # XGBoost 1.7 can dereference invalid memory on Windows while converting
+        # newer pandas DataFrames through its native pandas dispatch path.
+        X_train = np.ascontiguousarray(self.train_test['X_train'].to_numpy(dtype=np.float32))
+        y_train = np.asarray(self.train_test['Y_train']).reshape(-1)
+        best_model = clf_xgb.fit(X_train, y_train)
+        best_model.get_booster().feature_names = list(self.train_test['X_train'].columns)
 
         return best_model
 
@@ -294,7 +301,7 @@ class Classification:
         shap.summary_plot(shap_val, trainset, max_display=display, plot_type=plottype,
                           show=False)  # if you do not want a title you delete show=False and plt.show()
         fig = plt.gcf().set_size_inches(15, 5)
-        plt.title(title, fontsize=titlefontsize, fontname='Open sans', fontweight='bold', x=0.15, y=1.05)
+        plt.title(title, fontsize=titlefontsize, fontname='Arial', fontweight='bold', x=0.15, y=1.05)
 
         if save:
             if plottype is None:
